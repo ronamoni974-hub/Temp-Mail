@@ -28,6 +28,8 @@ def generate_random_string(length=10):
     return ''.join(random.choice(letters) for i in range(length))
 
 def extract_otp(text):
+    if not text:
+        return None
     spaced_match = re.search(r'(?:[A-Za-z0-9]\s+){5,}[A-Za-z0-9]', text)
     if spaced_match:
         return spaced_match.group(0).replace(" ", "")
@@ -42,7 +44,7 @@ def extract_otp(text):
         
     return None
 
-# --- UI Elements (Premium Minimalist Menu) ---
+# --- UI Elements ---
 def main_menu():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_gen = KeyboardButton("✨ Generate Premium Mail")
@@ -52,7 +54,7 @@ def main_menu():
     markup.add(btn_2fa)
     return markup
 
-# --- Mail Fetching Logic (Crash Proof) ---
+# --- Mail Fetching Logic ---
 def fetch_and_send_mails(chat_id, data, is_manual=False):
     token = data.get('token')
     if not token:
@@ -74,7 +76,6 @@ def fetch_and_send_mails(chat_id, data, is_manual=False):
             
         res_data = res.json()
         
-        # Smart JSON Parsing for Inbox
         if isinstance(res_data, list):
             messages = res_data
         else:
@@ -92,7 +93,12 @@ def fetch_and_send_mails(chat_id, data, is_manual=False):
                 full_msg_res = requests.get(f'https://api.mail.gw/messages/{msg_id}', headers=headers)
                 if full_msg_res.status_code == 200:
                     full_msg = full_msg_res.json()
+                    
+                    # HTML বা Intro সাপোর্ট যুক্ত করা হলো
                     text_content = full_msg.get('text', '')
+                    if not text_content:
+                        text_content = full_msg.get('intro', '')
+                        
                     subject = msg.get('subject', 'No Subject')
                     
                     if isinstance(msg.get('from'), dict):
@@ -102,32 +108,33 @@ def fetch_and_send_mails(chat_id, data, is_manual=False):
                     
                     otp = extract_otp(subject + " " + text_content)
                     
-                    # Premium Clean Notification UI
                     notification = f"🔔 **NEW MAIL RECEIVED!** 🔔\n\n"
                     notification += f"👤 **From:** `{sender}`\n"
                     notification += f"📌 **Subject:** {subject}\n\n"
                     
                     if otp:
                         notification += f"🔑 **Scanned Code/OTP:**\n"
-                        notification += f"👉 `{otp}` 👈\n"
-                        notification += f"*(Click to copy)*\n\n"
+                        notification += f"👉 `{otp}` 👈\n\n"
                     
-                    notification += f"📄 **Message:**\n_{text_content[:300]}..._"
+                    # ক্লিন মেসেজ বডি
+                    clean_text = text_content[:300].replace('*', '').replace('_', '')
+                    notification += f"📄 **Message:**\n_{clean_text}..._"
+                    
                     bot.send_message(chat_id, notification, parse_mode="Markdown")
         
         if is_manual and not new_mail_found:
-            bot.send_message(chat_id, "📭 ইনবক্সে কোনো নতুন মেইল নেই। অটোমেটিক চেকার চালু আছে।")
+            bot.send_message(chat_id, "📭 ইনবক্সে কোনো নতুন মেইল নেই।")
             
     except Exception as e:
         if is_manual:
-            bot.send_message(chat_id, "❌ ইনবক্স চেক করতে সমস্যা হচ্ছে।")
+            bot.send_message(chat_id, "❌ ইনবক্স চেক করতে সমস্যা হচ্ছে। সার্ভার ব্যস্ত থাকতে পারে।")
 
 # --- Auto Inbox Checker ---
 def auto_check_inbox():
     while True:
         for chat_id, data in list(users_data.items()):
             fetch_and_send_mails(chat_id, data, is_manual=False)
-        time.sleep(5) 
+        time.sleep(10) # রেট লিমিট এড়াতে টাইম বাড়ানো হলো
 
 # --- Handlers ---
 @bot.message_handler(commands=['start'])
@@ -145,10 +152,8 @@ def generate_otp_code(message):
         totp = pyotp.TOTP(secret)
         otp_code = totp.now()
         
-        # Clean OTP UI
         text = f"✅ **2FA Authenticator Code:**\n\n"
-        text += f"👉 `{otp_code}` 👈\n\n"
-        text += f"*(কোডের ওপর ক্লিক করলেই কপি হয়ে যাবে)*"
+        text += f"👉 `{otp_code}` 👈"
         
         bot.reply_to(message, text, parse_mode="Markdown")
     except Exception:
@@ -205,13 +210,10 @@ def generate_mail(message):
         
         bot.delete_message(chat_id, loading_msg.message_id)
         
-        # Premium Minimalist Mail UI
         final_msg = f"✨ **Premium Mail Generated Successfully!** ✨\n\n"
-        final_msg += f"📧 **Your Email Address:**\n"
-        final_msg += f"👉 `{email}` 👈\n"
-        final_msg += f"*(Click the email to copy)*\n\n"
+        final_msg += f"👉 `{email}` 👈\n\n"
         final_msg += f"🟢 **Live Status: Active & Listening...**\n"
-        final_msg += f"_(যেকোনো মেইল বা OTP আসলে এখানে অটোমেটিক শো করবে। প্রয়োজনে Inbox বাটনে ক্লিক করতে পারেন!)_"
+        final_msg += f"_(যেকোনো মেইল বা OTP আসলে এখানে অটোমেটিক শো করবে।)_"
         
         bot.send_message(chat_id, final_msg, parse_mode="Markdown")
         
