@@ -1,42 +1,146 @@
-import telebot
+ import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 import requests
 import random
 import string
 import os
 import pyotp
+import time
+import re
 from flask import Flask
 from threading import Thread
 
-# আপনার দেওয়া বটের টোকেন সরাসরি বসানো হয়েছে
+# আপনার বটের টোকেন
 BOT_TOKEN = "8068023821:AAEkhKKmiYcAFtv25WKr7v1hLlzMFYyQcHc"
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ইউজারদের ডেটা সেভ রাখার জন্য
 users_data = {}
 
-def generate_random_string(length=8):
-    letters = string.ascii_lowercase
+# --- API Headers ---
+API_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+    'Accept': 'application/json'
+}
+
+# --- Helper Functions ---
+def generate_random_string(length=10):
+    letters = string.ascii_lowercase + string.digits
     return ''.join(random.choice(letters) for i in range(length))
 
-# --- নিচের বাটন মেনু (Bottom Keyboard) ---
+def extract_otp(text):
+    spaced_match = re.search(r'(?:[A-Za-z0-9]\s+){5,}[A-Za-z0-9]', text)
+    if spaced_match:
+        return spaced_match.group(0).replace(" ", "")
+        
+    digits = re.search(r'\b\d{4,8}\b', text)
+    if digits:
+        return digits.group(0)
+        
+    alnum = re.search(r'\b[A-Z0-9]{5,10}\b', text, re.IGNORECASE)
+    if alnum:
+        return alnum.group(0)
+        
+    return None
+
+# --- UI Elements ---
+BOX_TOP = "╔══════════════════════════╗"
+BOX_BOT = "╚══════════════════════════╝"
+
 def main_menu():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn_gen = KeyboardButton("✉️ Generate Mail")
+    btn_gen = KeyboardButton("✨ Generate Premium Mail")
     btn_inbox = KeyboardButton("📥 Inbox")
-    btn_2fa = KeyboardButton("🔑 2FA Authenticator")
+    btn_2fa = KeyboardButton("🔐 2FA Authenticator")
     markup.add(btn_gen, btn_inbox)
     markup.add(btn_2fa)
     return markup
 
+# --- Mail Fetching Logic (Crash Proof) ---
+def fetch_and_send_mails(chat_id, data, is_manual=False):
+    token = data.get('token')
+    if not token:
+        if is_manual:
+            bot.send_message(chat_id, "⚠️ আপনার কোনো ইমেইল নেই! আগে '✨ Generate Premium Mail' এ ক্লিক করুন।")
+        return
+
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'User-Agent': API_HEADERS['User-Agent'],
+        'Accept': 'application/json'
+    }
+    seen_msgs = data.get('seen_msgs', set())
+    
+    try:
+        res = requests.get('https://api.mail.gw/messages', headers=headers)
+        if res.status_code != 200:
+            return
+            
+        res_data = res.json()
+        
+        # Smart JSON Parsing for Inbox
+        if isinstance(res_data, list):
+            messages = res_data
+        else:
+            messages = res_data.get('hydra:member', [])
+            
+        new_mail_found = False
+        
+        for msg in messages:
+            msg_id = msg['id']
+            if msg_id not in seen_msgs:
+                seen_msgs.add(msg_id)
+                users_data[chat_id]['seen_msgs'] = seen_msgs
+                new_mail_found = True
+                
+                full_msg_res = requests.get(f'https://api.mail.gw/messages/{msg_id}', headers=headers)
+                if full_msg_res.status_code == 200:
+                    full_msg = full_msg_res.json()
+                    text_content = full_msg.get('text', '')
+                    subject = msg.get('subject', 'No Subject')
+                    
+                    # Check sender format
+                    if isinstance(msg.get('from'), dict):
+                        sender = msg['from'].get('address', 'Unknown')
+                    else:
+                        sender = msg.get('from', 'Unknown')
+                    
+                    otp = extract_otp(subject + " " + text_content)
+                    
+                    notification = f"🔔 **NEW MAIL RECEIVED!** 🔔\n\n"
+                    notification += f"👤 **From:** `{sender}`\n"
+                    notification += f"📌 **Subject:** {subject}\n\n"
+                    
+                    if otp:
+                        notification += f"🔑 **Scanned OTP/Code:**\n"
+                        notification += f"{BOX_TOP}\n"
+                        notification += f"👉 `{otp}` 👈\n"
+                        notification += f"{BOX_BOT}\n\n"
+                    
+                    notification += f"📄 **Message:**\n_{text_content[:300]}..._"
+                    bot.send_message(chat_id, notification, parse_mode="Markdown")
+        
+        if is_manual and not new_mail_found:
+            bot.send_message(chat_id, "📭 ইনবক্সে কোনো নতুন মেইল নেই। অটোমেটিক চেকার চালু আছে।")
+            
+    except Exception as e:
+        if is_manual:
+            bot.send_message(chat_id, "❌ ইনবক্স চেক করতে সমস্যা হচ্ছে।")
+
+# --- Auto Inbox Checker ---
+def auto_check_inbox():
+    while True:
+        for chat_id, data in list(users_data.items()):
+            fetch_and_send_mails(chat_id, data, is_manual=False)
+        time.sleep(5) 
+
+# --- Handlers ---
 @bot.message_handler(commands=['start'])
 def start_message(message):
-    bot.reply_to(message, "👋 *Temp Mail & 2FA Bot*-এ স্বাগতম!\n\nনিচের বাটনগুলো ব্যবহার করে খুব সহজেই মেইল তৈরি, ইনবক্স চেক এবং 2FA কোড বের করতে পারবেন।", parse_mode="Markdown", reply_markup=main_menu())
+    bot.reply_to(message, "💎 *Premium Temp Mail & 2FA Bot*\n\nঅটোমেটিক ইনবক্স এবং স্মার্ট OTP স্ক্যানার সিস্টেম চালু আছে। নিচের বাটন থেকে সার্ভিস সিলেক্ট করুন।", parse_mode="Markdown", reply_markup=main_menu())
 
-# --- 2FA Authenticator এর কাজ ---
-@bot.message_handler(func=lambda message: message.text == "🔑 2FA Authenticator")
+@bot.message_handler(func=lambda message: message.text == "🔐 2FA Authenticator")
 def ask_2fa_secret(message):
-    msg = bot.reply_to(message, "🔐 **আপনার 2FA Secret Key (Setup Key) দিন:**\n*(যেকোনো ওয়েবসাইটের 2FA চালু করার সময় যে সিক্রেট টেক্সট দেয়, সেটি এখানে পেস্ট করুন)*", parse_mode="Markdown")
+    msg = bot.reply_to(message, "🛡️ **আপনার 2FA Setup/Secret Key দিন:**", parse_mode="Markdown")
     bot.register_next_step_handler(msg, generate_otp_code)
 
 def generate_otp_code(message):
@@ -44,100 +148,109 @@ def generate_otp_code(message):
     try:
         totp = pyotp.TOTP(secret)
         otp_code = totp.now()
-        bot.reply_to(message, f"✅ **আপনার 2FA OTP কোড:**\n\n`{otp_code}`\n\n*(কোডটির ওপর ক্লিক করলেই কপি হয়ে যাবে)*", parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(message, "❌ **ভুল Secret Key!** দয়া করে সঠিক Key দিন।", parse_mode="Markdown")
+        
+        text = f"✅ **2FA Authenticator Code:**\n\n"
+        text += f"{BOX_TOP}\n"
+        text += f"👉 `{otp_code}` 👈\n"
+        text += f"{BOX_BOT}\n\n"
+        text += f"*(ক্লিক করলেই কপি হয়ে যাবে)*"
+        
+        bot.reply_to(message, text, parse_mode="Markdown")
+    except Exception:
+        bot.reply_to(message, "❌ **ভুল Secret Key!**")
 
-# --- Temp Mail Generate করার কাজ ---
-@bot.message_handler(func=lambda message: message.text == "✉️ Generate Mail" or message.text == "/generate")
+@bot.message_handler(func=lambda message: message.text == "✨ Generate Premium Mail" or message.text == "/generate")
 def generate_mail(message):
     chat_id = message.chat.id
-    bot.send_message(chat_id, "⏳ ইমেইল তৈরি হচ্ছে, একটু অপেক্ষা করুন...")
+    
+    loading_msg = bot.send_message(chat_id, "⏳ `[■■□□□□□□□□] 20%`\nConnecting to server...", parse_mode="Markdown")
     
     try:
-        domain_res = requests.get('https://api.mail.gw/domains').json()
-        domain = domain_res['hydra:member'][0]['domain']
+        # Get Domain
+        domain_res = requests.get('https://api.mail.gw/domains', headers=API_HEADERS)
+        if domain_res.status_code != 200:
+            bot.edit_message_text(f"❌ API Error (Domain): {domain_res.status_code}", chat_id, loading_msg.message_id)
+            return
+            
+        domain_data = domain_res.json()
         
-        username = generate_random_string()
+        # Smart JSON Parsing for Domain
+        if isinstance(domain_data, list) and len(domain_data) > 0:
+            domain = domain_data[0].get('domain', 'mail.gw')
+        elif isinstance(domain_data, dict) and 'hydra:member' in domain_data and len(domain_data['hydra:member']) > 0:
+            domain = domain_data['hydra:member'][0].get('domain', 'mail.gw')
+        else:
+            domain = 'mail.gw' # Fallback default
+            
+        bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nGenerating domain address...", chat_id, loading_msg.message_id, parse_mode="Markdown")
+        
+        # Create Account
+        username = generate_random_string(10)
         email = f"{username}@{domain}"
-        password = generate_random_string(10)
-        
+        password = generate_random_string(12)
         acc_data = {"address": email, "password": password}
-        requests.post('https://api.mail.gw/accounts', json=acc_data)
         
-        token_res = requests.post('https://api.mail.gw/token', json=acc_data).json()
-        token = token_res['token']
+        acc_res = requests.post('https://api.mail.gw/accounts', json=acc_data, headers=API_HEADERS)
+        if acc_res.status_code not in [200, 201]:
+            bot.edit_message_text(f"❌ Registration Error! Try again.", chat_id, loading_msg.message_id)
+            return
+
+        bot.edit_message_text("⏳ `[■■■■■■■■■□] 90%`\nActivating Live Inbox...", chat_id, loading_msg.message_id, parse_mode="Markdown")
         
-        users_data[chat_id] = {"email": email, "password": password, "token": token}
+        # Get Token
+        token_res = requests.post('https://api.mail.gw/token', json=acc_data, headers=API_HEADERS)
+        if token_res.status_code not in [200, 201]:
+            bot.edit_message_text(f"❌ Token Error! Try again.", chat_id, loading_msg.message_id)
+            return
+            
+        token_data = token_res.json()
+        token = token_data.get('token')
         
-        msg = f"✅ **আপনার নতুন ইমেইল তৈরি হয়েছে!**\n\n📧 **ইমেইল:** `{email}`\n🔑 **পাসওয়ার্ড:** `{password}`\n\nমেইল চেক করতে '📥 Inbox' বাটনে ক্লিক করুন।"
-        bot.send_message(chat_id, msg, parse_mode="Markdown")
+        # Save Data
+        users_data[chat_id] = {
+            "email": email, 
+            "token": token, 
+            "seen_msgs": set()
+        }
+        
+        bot.delete_message(chat_id, loading_msg.message_id)
+        
+        # Success Message
+        final_msg = f"✨ **Premium Mail Generated Successfully!** ✨\n\n"
+        final_msg += f"{BOX_TOP}\n"
+        final_msg += f"👉 `{email}` 👈\n"
+        final_msg += f"{BOX_BOT}\n\n"
+        final_msg += f"🟢 **Live Status: Active & Listening...**\n"
+        final_msg += f"*(যেকোনো মেইল বা OTP আসলে এখানে অটোমেটিক শো করবে। প্রয়োজনে Inbox বাটনে ক্লিক করতে পারেন!)*"
+        
+        bot.send_message(chat_id, final_msg, parse_mode="Markdown")
         
     except Exception as e:
-        bot.send_message(chat_id, "❌ কোনো একটা সমস্যা হয়েছে। আবার চেষ্টা করুন।")
+        bot.edit_message_text(f"❌ Server Error! Detail: {str(e)}", chat_id, loading_msg.message_id)
 
-# --- Inbox চেক করার কাজ ---
 @bot.message_handler(func=lambda message: message.text == "📥 Inbox" or message.text == "/inbox")
 def check_inbox(message):
     chat_id = message.chat.id
     if chat_id not in users_data:
-        bot.send_message(chat_id, "⚠️ আপনার কোনো ইমেইল নেই! আগে '✉️ Generate Mail' বাটনে ক্লিক করুন।")
+        bot.send_message(chat_id, "⚠️ আপনার কোনো ইমেইল নেই! আগে '✨ Generate Premium Mail' এ ক্লিক করুন।")
         return
         
-    token = users_data[chat_id]['token']
-    headers = {'Authorization': f'Bearer {token}'}
-    
     bot.send_message(chat_id, "🔄 ইনবক্স চেক করা হচ্ছে...")
-    
-    try:
-        messages_res = requests.get('https://api.mail.gw/messages', headers=headers).json()
-        messages = messages_res.get('hydra:member', [])
-        
-        if not messages:
-            bot.send_message(chat_id, "📭 ইনবক্সে কোনো নতুন মেইল নেই।")
-        else:
-            for msg in messages:
-                sender = msg['from']['address']
-                subject = msg['subject']
-                msg_id = msg['id']
-                text = f"📩 **নতুন মেইল!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** {subject}\n\nমেইলটি পড়তে নিচের কমান্ডটিতে ক্লিক করুন:\n`/read_{msg_id}`"
-                bot.send_message(chat_id, text, parse_mode="Markdown")
-    except Exception as e:
-        bot.send_message(chat_id, "❌ ইনবক্স চেক করতে সমস্যা হচ্ছে।")
-
-# --- মেইল পড়ার কাজ ---
-@bot.message_handler(func=lambda message: message.text.startswith('/read_'))
-def read_message(message):
-    chat_id = message.chat.id
-    msg_id = message.text.split('_')[1]
-    
-    if chat_id not in users_data:
-        bot.send_message(chat_id, "⚠️ আপনার একাউন্ট পাওয়া যায়নি।")
-        return
-        
-    token = users_data[chat_id]['token']
-    headers = {'Authorization': f'Bearer {token}'}
-    
-    try:
-        msg_res = requests.get(f'https://api.mail.gw/messages/{msg_id}', headers=headers).json()
-        content = msg_res.get('text', 'No text content available.')
-        bot.send_message(chat_id, f"📄 **মেইলের বিষয়বস্তু:**\n\n{content}", parse_mode="Markdown")
-    except Exception as e:
-        bot.send_message(chat_id, "❌ মেইলটি পড়তে সমস্যা হচ্ছে।")
+    fetch_and_send_mails(chat_id, users_data[chat_id], is_manual=True)
 
 # --- Render Web Service-এর জন্য Flask ---
 app = Flask(__name__)
 @app.route('/')
 def index():
-    return "Bot is running perfectly on Render!"
+    return "Premium Bot is Live & Listening!"
 
-def run():
+def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+def start_threads():
+    Thread(target=run_flask, daemon=True).start()
+    Thread(target=auto_check_inbox, daemon=True).start()
 
 if __name__ == "__main__":
-    keep_alive()
+    start_threads()
     bot.polling(none_stop=True)
