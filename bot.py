@@ -1,4 +1,4 @@
- import telebot
+import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 import requests
 import random
@@ -42,10 +42,7 @@ def extract_otp(text):
         
     return None
 
-# --- UI Elements ---
-BOX_TOP = "╔══════════════════════════╗"
-BOX_BOT = "╚══════════════════════════╝"
-
+# --- UI Elements (Premium Minimalist Menu) ---
 def main_menu():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_gen = KeyboardButton("✨ Generate Premium Mail")
@@ -98,7 +95,6 @@ def fetch_and_send_mails(chat_id, data, is_manual=False):
                     text_content = full_msg.get('text', '')
                     subject = msg.get('subject', 'No Subject')
                     
-                    # Check sender format
                     if isinstance(msg.get('from'), dict):
                         sender = msg['from'].get('address', 'Unknown')
                     else:
@@ -106,15 +102,15 @@ def fetch_and_send_mails(chat_id, data, is_manual=False):
                     
                     otp = extract_otp(subject + " " + text_content)
                     
+                    # Premium Clean Notification UI
                     notification = f"🔔 **NEW MAIL RECEIVED!** 🔔\n\n"
                     notification += f"👤 **From:** `{sender}`\n"
                     notification += f"📌 **Subject:** {subject}\n\n"
                     
                     if otp:
-                        notification += f"🔑 **Scanned OTP/Code:**\n"
-                        notification += f"{BOX_TOP}\n"
+                        notification += f"🔑 **Scanned Code/OTP:**\n"
                         notification += f"👉 `{otp}` 👈\n"
-                        notification += f"{BOX_BOT}\n\n"
+                        notification += f"*(Click to copy)*\n\n"
                     
                     notification += f"📄 **Message:**\n_{text_content[:300]}..._"
                     bot.send_message(chat_id, notification, parse_mode="Markdown")
@@ -149,11 +145,10 @@ def generate_otp_code(message):
         totp = pyotp.TOTP(secret)
         otp_code = totp.now()
         
+        # Clean OTP UI
         text = f"✅ **2FA Authenticator Code:**\n\n"
-        text += f"{BOX_TOP}\n"
-        text += f"👉 `{otp_code}` 👈\n"
-        text += f"{BOX_BOT}\n\n"
-        text += f"*(ক্লিক করলেই কপি হয়ে যাবে)*"
+        text += f"👉 `{otp_code}` 👈\n\n"
+        text += f"*(কোডের ওপর ক্লিক করলেই কপি হয়ে যাবে)*"
         
         bot.reply_to(message, text, parse_mode="Markdown")
     except Exception:
@@ -166,7 +161,6 @@ def generate_mail(message):
     loading_msg = bot.send_message(chat_id, "⏳ `[■■□□□□□□□□] 20%`\nConnecting to server...", parse_mode="Markdown")
     
     try:
-        # Get Domain
         domain_res = requests.get('https://api.mail.gw/domains', headers=API_HEADERS)
         if domain_res.status_code != 200:
             bot.edit_message_text(f"❌ API Error (Domain): {domain_res.status_code}", chat_id, loading_msg.message_id)
@@ -174,17 +168,15 @@ def generate_mail(message):
             
         domain_data = domain_res.json()
         
-        # Smart JSON Parsing for Domain
         if isinstance(domain_data, list) and len(domain_data) > 0:
             domain = domain_data[0].get('domain', 'mail.gw')
         elif isinstance(domain_data, dict) and 'hydra:member' in domain_data and len(domain_data['hydra:member']) > 0:
             domain = domain_data['hydra:member'][0].get('domain', 'mail.gw')
         else:
-            domain = 'mail.gw' # Fallback default
+            domain = 'mail.gw' 
             
         bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nGenerating domain address...", chat_id, loading_msg.message_id, parse_mode="Markdown")
         
-        # Create Account
         username = generate_random_string(10)
         email = f"{username}@{domain}"
         password = generate_random_string(12)
@@ -197,7 +189,6 @@ def generate_mail(message):
 
         bot.edit_message_text("⏳ `[■■■■■■■■■□] 90%`\nActivating Live Inbox...", chat_id, loading_msg.message_id, parse_mode="Markdown")
         
-        # Get Token
         token_res = requests.post('https://api.mail.gw/token', json=acc_data, headers=API_HEADERS)
         if token_res.status_code not in [200, 201]:
             bot.edit_message_text(f"❌ Token Error! Try again.", chat_id, loading_msg.message_id)
@@ -206,7 +197,6 @@ def generate_mail(message):
         token_data = token_res.json()
         token = token_data.get('token')
         
-        # Save Data
         users_data[chat_id] = {
             "email": email, 
             "token": token, 
@@ -215,13 +205,13 @@ def generate_mail(message):
         
         bot.delete_message(chat_id, loading_msg.message_id)
         
-        # Success Message
+        # Premium Minimalist Mail UI
         final_msg = f"✨ **Premium Mail Generated Successfully!** ✨\n\n"
-        final_msg += f"{BOX_TOP}\n"
+        final_msg += f"📧 **Your Email Address:**\n"
         final_msg += f"👉 `{email}` 👈\n"
-        final_msg += f"{BOX_BOT}\n\n"
+        final_msg += f"*(Click the email to copy)*\n\n"
         final_msg += f"🟢 **Live Status: Active & Listening...**\n"
-        final_msg += f"*(যেকোনো মেইল বা OTP আসলে এখানে অটোমেটিক শো করবে। প্রয়োজনে Inbox বাটনে ক্লিক করতে পারেন!)*"
+        final_msg += f"_(যেকোনো মেইল বা OTP আসলে এখানে অটোমেটিক শো করবে। প্রয়োজনে Inbox বাটনে ক্লিক করতে পারেন!)_"
         
         bot.send_message(chat_id, final_msg, parse_mode="Markdown")
         
