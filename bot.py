@@ -8,18 +8,19 @@ import pyotp
 import time
 import re
 import json
+import html
 import firebase_admin
 from firebase_admin import credentials, db
 from flask import Flask
 from threading import Thread
-from mailtd import MailTD # <-- Mail.td এর অরিজিনাল লাইব্রেরি
+from mailtd import MailTD
 
 # --- কনফিগারেশন ---
 BOT_TOKEN = "8705131481:AAF8TnG9nx1U-BZz0nXYP_jxtSWNeSQPbYY"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # অ্যাডমিন ও ডেভেলপার সেপারেশন
-ADMIN_ID = 123456789 # <--- যিনি বট চালাবেন (আপনার ক্লায়েন্ট) তার ID
+ADMIN_ID = 123456789 # <--- ক্লায়েন্টের ID
 ADMIN_USERNAME = "YourAdminUsername" # <--- ক্লায়েন্টের ইউজারনেম (বিনা @ তে)
 DEVELOPER_ID = 6670461311 # আপনার (Walid) সুপার-অ্যাডমিন ID
 SUPPORT_LINK = "https://t.me/Ad_Walid" 
@@ -59,8 +60,14 @@ def extract_otp(text):
 
 def clean_mail_body(text):
     if not text: return "No content"
-    text = re.sub(r'http[s]?://\S+', '', text)
-    text = re.sub(r'\[.*?\]', '', text)
+    text = str(text)
+    # Remove HTML <style> and <script> blocks
+    text = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    # Remove all HTML tags
+    text = re.sub(r'<[^>]+>', ' ', text)
+    # Decode HTML entities (like &amp; &nbsp;)
+    text = html.unescape(text)
+    # Clean whitespace and markdown breakers
     text = " ".join(text.split()).replace('*', '').replace('_', '').replace('`', '')
     return text[:150] + "..." if len(text) > 150 else text
 
@@ -132,7 +139,6 @@ def start_message(message):
 
     increment_stat("total_users")
     
-    # Beautiful Welcome Message
     welcome_text = "🎉 **Welcome to Premium Temp Mail Bot!** 🎉\n\n"
     welcome_text += "সোশ্যাল মিডিয়া বা যেকোনো অ্যাকাউন্ট খোলার জন্য হাই-কোয়ালিটি এবং সিকিউর মেইল জেনারেট করুন এক ক্লিকে।\n\n"
     welcome_text += "🔹 **Fast Live Inbox & OTP Scanner**\n"
@@ -213,20 +219,41 @@ def generate_otp_code(message):
     try:
         totp = pyotp.TOTP(secret)
         otp_code = totp.now()
-        text = f"✅ **2FA Authenticator Code:**\n\n👉 `{otp_code}` 👈\n\n*(কোডটি কপি করতে ক্লিক করুন)*"
-        bot.reply_to(message, text, parse_mode="Markdown", reply_markup=main_menu(message.chat.id))
+        
+        text = f"✅ **2FA Authenticator Code:**\n\nনিচের বাটনে চাপ দিয়ে কোডটি কপি করুন ⤵️"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton(f"📋 {otp_code}", callback_data=f"copy_{otp_code}"))
+        
+        bot.reply_to(message, text, parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(message.chat.id, "মেইন মেনু থেকে যেকোনো সার্ভিস সিলেক্ট করুন:", reply_markup=main_menu(message.chat.id))
     except Exception:
         bot.reply_to(message, "❌ **ভুল Secret Key!** আবার চেষ্টা করুন।", reply_markup=main_menu(message.chat.id))
 
 # --- Notification Builder ---
 def build_and_send_notification(chat_id, sender, subj, text, html_content=""):
     otp = extract_otp(subj + " " + text + " " + str(html_content))
-    clean_txt = clean_mail_body(text if text else html_content)
     
-    notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** {subj}\n\n"
-    if otp: notification += f"🔑 **OTP / Code:**\n👉 `{otp}` 👈\n\n"
+    # HTML ক্লিনার এর জন্য বেস্ট কন্টেন্ট সিলেক্ট করা
+    content_to_clean = text if (text and len(text) > 15) else html_content
+    if not content_to_clean: content_to_clean = text
+    clean_txt = clean_mail_body(content_to_clean)
+    
+    notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** `{subj}`\n\n"
+    
+    markup = InlineKeyboardMarkup()
+    if otp: 
+        notification += f"নিচের বাটনে চাপ দিয়ে কোডটি কপি করুন ⤵️\n\n"
+        markup.add(InlineKeyboardButton(f"📋 {otp}", callback_data=f"copy_{otp}"))
+        
     notification += f"📄 **Message:**\n_{clean_txt}_"
-    bot.send_message(chat_id, notification, parse_mode="Markdown")
+    bot.send_message(chat_id, notification, parse_mode="Markdown", reply_markup=markup if otp else None)
+
+# --- OTP Copy Action Callback ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('copy_'))
+def copy_otp_callback(call):
+    otp = call.data.split('_')[1]
+    # টেলিগ্রামের ইনলাইন বাটন থেকে কপি করার জন্য Alert শো করবে (যেখানে হোল্ড করে কপি করা যায়)
+    bot.answer_callback_query(call.id, f"✅ Code: {otp}\n\n(Note: Press & Hold the button text to copy if your device supports it, or read the code)", show_alert=True)
 
 # --- Mail Generation ---
 @bot.message_handler(func=lambda m: m.text == "✨ Generate Premium Mail")
@@ -252,7 +279,6 @@ def generate_mail(message):
         for key in keys:
             try:
                 bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nFetching Premium Domain (Mail.td)...", user_id, loading_msg.message_id, parse_mode="Markdown")
-                # MailTD Original Library Use
                 client = MailTD(key)
                 domains = client.accounts.list_domains()
                 domain = domains[0].domain if hasattr(domains[0], 'domain') else domains[0]
@@ -276,7 +302,7 @@ def generate_mail(message):
             except Exception as e:
                 error_log += f"\n• Key {key[:5]}... : {str(e)}"
                 continue
-    else: # mail.gw
+    else: 
         try:
             bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nFetching Default Domain (Mail.gw)...", user_id, loading_msg.message_id, parse_mode="Markdown")
             headers = get_api_headers()
@@ -366,7 +392,8 @@ def check_inbox(message):
                     subj = msg.get('subject', 'No Subject')
                     sender = msg['from'].get('address', 'Unknown') if isinstance(msg.get('from'), dict) else msg.get('from', 'Unknown')
                     text = full_msg.get('text', '') or full_msg.get('intro', '')
-                    build_and_send_notification(user_id, sender, subj, text)
+                    html_body = full_msg.get('html', '') or full_msg.get('htmlBody', '')
+                    build_and_send_notification(user_id, sender, subj, text, html_body)
                     
         if not new_mail_found:
             bot.edit_message_text("📭 **কোনো নতুন মেইল বা OTP আসেনি!**\n\n_দয়া করে ওয়েবসাইট থেকে কোডটি আবার Resend করুন অথবা কিছুক্ষণ অপেক্ষা করুন।_", user_id, loading_msg.message_id, parse_mode="Markdown")
@@ -374,7 +401,7 @@ def check_inbox(message):
             bot.delete_message(user_id, loading_msg.message_id)
             
     except Exception as e:
-        bot.edit_message_text(f"❌ **Network Error!**\nDetails: `{str(e)}`", user_id, loading_msg.message_id, parse_mode="Markdown")
+        bot.edit_message_text(f"❌ **Network Error!**\nDetails: `{str(e)[:50]}`", user_id, loading_msg.message_id, parse_mode="Markdown")
 
 # --- Dashboard ---
 @bot.message_handler(func=lambda m: m.text == "🎛️ Dashboard")
@@ -598,7 +625,8 @@ def fetch_mail_for_user(chat_id, user_data):
                     subj = msg.get('subject', 'No Subject')
                     sender = msg['from'].get('address', 'Unknown') if isinstance(msg.get('from'), dict) else msg.get('from', 'Unknown')
                     text = full_msg.get('text', '') or full_msg.get('intro', '')
-                    build_and_send_notification(chat_id, sender, subj, text)
+                    html_body = full_msg.get('html', '') or full_msg.get('htmlBody', '')
+                    build_and_send_notification(chat_id, sender, subj, text, html_body)
     except: pass
 
 def auto_check_inbox():
