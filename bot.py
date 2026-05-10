@@ -202,7 +202,7 @@ def support(message):
     markup.add(InlineKeyboardButton("💬 Contact Bot Admin", url=f"https://t.me/{ADMIN_USERNAME}"))
     bot.send_message(message.chat.id, "🎧 **Support Center**\n\nবটের যেকোনো সমস্যার জন্য অ্যাডমিনের সাথে যোগাযোগ করুন। টেকনিক্যাল সাপোর্টের জন্য ডেভেলপারের সাথে যোগাযোগ করতে পারেন।", parse_mode="Markdown", reply_markup=markup)
 
-# --- 2FA Authenticator ---
+# --- 2FA Authenticator (Clean & Minimal) ---
 @bot.message_handler(func=lambda m: m.text == "🔐 2FA Authenticator")
 def ask_2fa_secret(message):
     if not check_force_sub(message.chat.id): return start_message(message)
@@ -216,21 +216,15 @@ def generate_otp_code(message):
         totp = pyotp.TOTP(secret)
         otp_code = totp.now()
         
-        # 2FA তে শুধুমাত্র OTP বাটন থাকবে
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton(f"📋 {otp_code}", callback_data=f"copy_{otp_code}"))
-        
-        # টেক্সটটি Monospace (`code`) এ দেওয়া হলো যাতে এক ক্লিকেই কপি হয়
-        otp_msg = f"✅ **2FA Authenticator Code:**\n\nকপি করতে নিচের কোডটিতে ক্লিক করুন 👇\n\n`{otp_code}`"
-        bot.reply_to(message, otp_msg, parse_mode="Markdown", reply_markup=markup)
-        
-        bot.send_message(message.chat.id, "মেইন মেনু থেকে যেকোনো সার্ভিস সিলেক্ট করুন:", reply_markup=main_menu(message.chat.id))
+        # একদম ক্লিন, শুধু OTP থাকবে (টাচ করলেই কপি হবে)
+        bot.reply_to(message, f"`{otp_code}`", parse_mode="Markdown", reply_markup=main_menu(message.chat.id))
     except Exception:
         bot.reply_to(message, "❌ **ভুল Secret Key!** আবার চেষ্টা করুন।", reply_markup=main_menu(message.chat.id))
 
-# --- Notification Builder (OTP Separated Logic) ---
+# --- Notification Builder (Minimal OTP) ---
 def build_and_send_notification(chat_id, sender, subj, text, html_content=""):
     otp = extract_otp(subj + " " + text + " " + str(html_content))
+    
     content_to_clean = text if (text and len(text) > 15) else html_content
     if not content_to_clean: content_to_clean = text
     clean_txt = clean_mail_body(content_to_clean)
@@ -239,26 +233,14 @@ def build_and_send_notification(chat_id, sender, subj, text, html_content=""):
     main_notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** `{subj}`\n\n📄 **Message:**\n_{clean_txt}_"
     bot.send_message(chat_id, main_notification, parse_mode="Markdown")
     
-    # দ্বিতীয় মেসেজ: সেপারেট OTP মেসেজ এবং রিফ্রেশ বাটন
+    # দ্বিতীয় মেসেজ: একদম ক্লিন OTP টেক্সট এবং Refresh বাটন
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🔄 Refresh", callback_data="refresh_inbox"))
+    
     if otp:
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton(f"📋 {otp}", callback_data=f"copy_{otp}"),
-            InlineKeyboardButton("🔄 Refresh", callback_data="refresh_inbox")
-        )
-        otp_msg = f"🔑 **OTP / Code:**\nকপি করতে নিচের কোডটিতে ক্লিক করুন 👇\n\n`{otp}`"
-        bot.send_message(chat_id, otp_msg, parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(chat_id, f"`{otp}`", parse_mode="Markdown", reply_markup=markup)
     else:
-        # OTP না থাকলে শুধু Refresh বাটন সমেত একটি ছোট মেসেজ
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔄 Refresh", callback_data="refresh_inbox"))
         bot.send_message(chat_id, "অতিরিক্ত মেইল চেক করতে রিফ্রেশ করুন:", reply_markup=markup)
-
-# --- Action Callbacks ---
-@bot.callback_query_handler(func=lambda call: call.data.startswith('copy_'))
-def copy_otp_callback(call):
-    # বাটন ক্লিক করলে কপি করার নিয়ম বলে দেবে, কারণ সরাসরি বাটন থেকে কপি হয় না
-    bot.answer_callback_query(call.id, f"সরাসরি কপি করতে মেসেজের ভেতরে থাকা কোডটির উপর ক্লিক করুন!", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'refresh_inbox')
 def refresh_inbox_callback(call):
