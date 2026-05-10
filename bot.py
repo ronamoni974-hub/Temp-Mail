@@ -11,7 +11,7 @@ from flask import Flask
 from threading import Thread
 
 # আপনার বটের টোকেন
-BOT_TOKEN = "8068023821:AAEkhKKmiYcAFtv25WKr7v1hLlzMFYyQcHc"
+BOT_TOKEN = "8705131481:AAF8TnG9nx1U-BZz0nXYP_jxtSWNeSQPbYY"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 users_data = {}
