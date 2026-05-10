@@ -17,8 +17,9 @@ from threading import Thread
 BOT_TOKEN = "8705131481:AAF8TnG9nx1U-BZz0nXYP_jxtSWNeSQPbYY"
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# অ্যাডমিন আইডি ও ডেভেলপার তথ্য
-ADMIN_ID = 6670461311 # আপনার সুপার-অ্যাডমিন আইডি
+# অ্যাডমিন ও ডেভেলপার সেপারেশন
+ADMIN_ID = 123456789 # <--- যিনি বটটি চালাবেন (আপনার ক্লায়েন্ট) তার ID এখানে দিন
+DEVELOPER_ID = 6670461311 # আপনার (Walid) সুপার-অ্যাডমিন ID
 SUPPORT_LINK = "https://t.me/Ad_Walid" 
 
 # --- Firebase সেটআপ ---
@@ -30,11 +31,6 @@ try:
     print("Firebase Connected Successfully!")
 except Exception as e:
     print("Firebase Setup Pending or Error:", e)
-
-API_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/114.0.0.0 Safari/537.36',
-    'Accept': 'application/json'
-}
 
 # --- Helper Functions ---
 def generate_random_string(length=10):
@@ -85,7 +81,7 @@ def check_force_sub(user_id):
         status = bot.get_chat_member(channel, user_id).status
         if status in ['member', 'administrator', 'creator']: return True
         return False
-    except: return True # If bot is not admin in channel or error occurs, allow user
+    except: return True 
 
 # --- UI Menus ---
 def main_menu(user_id):
@@ -94,7 +90,8 @@ def main_menu(user_id):
     markup.add(KeyboardButton("🎛️ Dashboard"), KeyboardButton("👤 Profile"))
     markup.add(KeyboardButton("🌐 Server"), KeyboardButton("🔐 2FA Authenticator"))
     markup.add(KeyboardButton("🎧 Support"))
-    if user_id == ADMIN_ID:
+    # অ্যাডমিন বা ডেভেলপার হলে প্যানেল শো করবে
+    if user_id in [ADMIN_ID, DEVELOPER_ID]:
         markup.add(KeyboardButton("⚙️ Admin Panel"))
     return markup
 
@@ -154,9 +151,8 @@ def server_menu(message):
     current = get_user_data(user_id).get("server", "mail.gw")
     
     markup = InlineKeyboardMarkup()
-    btn1 = InlineKeyboardButton(f"{'✅' if current=='mail.gw' else ''} Mail.gw", callback_data="srv_mail.gw")
-    btn2 = InlineKeyboardButton(f"{'✅' if current=='mail.td' else ''} Mail.td", callback_data="srv_mail.td")
-    markup.add(btn1, btn2)
+    markup.add(InlineKeyboardButton(f"{'✅' if current=='mail.gw' else ''} Mail.gw", callback_data="srv_mail.gw"),
+               InlineKeyboardButton(f"{'✅' if current=='mail.td' else ''} Mail.td", callback_data="srv_mail.td"))
     bot.send_message(user_id, f"🌐 **Current Server:** `{current}`\n\nসার্ভার সিলেক্ট করুন:", parse_mode="Markdown", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('srv_'))
@@ -205,6 +201,14 @@ def generate_otp_code(message):
         bot.reply_to(message, "❌ **ভুল Secret Key!**", reply_markup=main_menu(message.chat.id))
 
 # --- Mail Generation ---
+def get_api_headers(api_key=None):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+    }
+    if api_key: headers['Authorization'] = f"Bearer {api_key}"
+    return headers
+
 @bot.message_handler(func=lambda m: m.text == "✨ Generate Premium Mail")
 def generate_mail(message):
     user_id = message.chat.id
@@ -217,22 +221,25 @@ def generate_mail(message):
     loading_msg = bot.send_message(user_id, "⏳ `[■■□□□□□□□□] 20%`\nConnecting to server...", parse_mode="Markdown")
     
     success = False
-    api_list = ["https://api.mail.gw"] if server == "mail.gw" else (db.reference('settings/mail_td_apis').get() or ["https://api.mail.tm"])
+    # Mail.td এর জন্য ডেটাবেস থেকে API লিস্ট আনবে
+    api_list = ["https://api.mail.gw"] if server == "mail.gw" else (db.reference('settings/mail_td_apis').get() or ["https://api.mail.td"])
     
     for api_base in api_list:
         try:
             bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nFetching Domain...", user_id, loading_msg.message_id, parse_mode="Markdown")
-            domain_res = requests.get(f'{api_base}/domains', headers=API_HEADERS).json()
+            headers = get_api_headers()
+            
+            domain_res = requests.get(f'{api_base}/domains', headers=headers).json()
             domain = domain_res['hydra:member'][0]['domain'] if 'hydra:member' in domain_res else domain_res[0]['domain']
             
             email = f"{generate_random_string()}@{domain}"
             password = generate_random_string(12)
             acc_data = {"address": email, "password": password}
             
-            requests.post(f'{api_base}/accounts', json=acc_data, headers=API_HEADERS)
+            requests.post(f'{api_base}/accounts', json=acc_data, headers=headers)
             
             bot.edit_message_text("⏳ `[■■■■■■■■■□] 90%`\nActivating Live Inbox...", user_id, loading_msg.message_id, parse_mode="Markdown")
-            token_res = requests.post(f'{api_base}/token', json=acc_data, headers=API_HEADERS).json()
+            token_res = requests.post(f'{api_base}/token', json=acc_data, headers=headers).json()
             token = token_res['token']
             
             mails = user_data.get("mails", {})
@@ -249,9 +256,9 @@ def generate_mail(message):
             continue
             
     if not success:
-        bot.edit_message_text("❌ সার্ভার সাময়িক ডাউন আছে। অন্য সার্ভার ট্রাই করুন অথবা অ্যাডমিনকে জানান।", user_id, loading_msg.message_id)
+        bot.edit_message_text("❌ সব API ডাউন আছে! অ্যাডমিনকে আপডেট করতে বলুন।", user_id, loading_msg.message_id)
 
-# --- Dashboard & Inbox Logic (Skipped logic for brevity, keeping old valid structure) ---
+# --- Dashboard ---
 @bot.message_handler(func=lambda m: m.text == "🎛️ Dashboard")
 def dashboard(message):
     if not check_force_sub(message.chat.id): return start_message(message)
@@ -300,13 +307,14 @@ def get_admin_markup():
     markup.add(InlineKeyboardButton("✉️ Broadcast Notice", callback_data="admin_notice"))
     return markup
 
-@bot.message_handler(func=lambda m: m.text == "⚙️ Admin Panel" and m.chat.id == ADMIN_ID)
+@bot.message_handler(func=lambda m: m.text == "⚙️ Admin Panel")
 def admin_panel(message):
+    if message.chat.id not in [ADMIN_ID, DEVELOPER_ID]: return
     bot.send_message(message.chat.id, "⚙️ **Admin Dashboard**", parse_mode="Markdown", reply_markup=get_admin_markup())
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
 def admin_actions(call):
-    if call.message.chat.id != ADMIN_ID: return
+    if call.message.chat.id not in [ADMIN_ID, DEVELOPER_ID]: return
     action = call.data.split('_')[1]
     
     if action == "home":
@@ -326,8 +334,8 @@ def admin_actions(call):
         bot.edit_message_text(f"📢 **Force Sub Channel**\nCurrent: `{channel}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
 
     elif action == "tdapis":
-        apis = db.reference('settings/mail_td_apis').get() or ["https://api.mail.tm"]
-        text = "🔗 **Mail.td APIs:**\n" + "\n".join([f"• `{a}`" for a in apis])
+        apis = db.reference('settings/mail_td_apis').get() or ["https://api.mail.td"]
+        text = "🔗 **Mail.td APIs (Fallback List):**\n" + "\n".join([f"• `{a}`" for a in apis])
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("➕ Add API", callback_data="tdapi_add"), InlineKeyboardButton("🗑️ Clear All", callback_data="tdapi_clear"))
         markup.add(InlineKeyboardButton("🔙 Back", callback_data="admin_home"))
@@ -344,30 +352,30 @@ def admin_actions(call):
 # Admin Sub-Actions
 @bot.callback_query_handler(func=lambda call: call.data.startswith('fsub_') or call.data.startswith('tdapi_') or call.data.startswith('ban_') or call.data.startswith('unban_'))
 def admin_sub_actions(call):
-    if call.message.chat.id != ADMIN_ID: return
+    if call.message.chat.id not in [ADMIN_ID, DEVELOPER_ID]: return
     
     if call.data == "fsub_remove":
         db.reference('settings/force_sub').delete()
         bot.answer_callback_query(call.id, "Channel removed!")
-        admin_actions(call) # refresh
+        admin_actions(call)
         
     elif call.data == "fsub_set":
         msg = bot.send_message(call.message.chat.id, "চ্যানেলের ইউজারনেম দিন (যেমন: @MyChannel):", reply_markup=back_markup())
         bot.register_next_step_handler(msg, lambda m: db.reference('settings/force_sub').set(m.text) if m.text != "🔙 Back to Main Menu" else back_to_main(m))
         
     elif call.data == "tdapi_clear":
-        db.reference('settings/mail_td_apis').set(["https://api.mail.tm"])
-        bot.answer_callback_query(call.id, "Reset to default!")
+        db.reference('settings/mail_td_apis').set(["https://api.mail.td"])
+        bot.answer_callback_query(call.id, "APIs Cleared!")
         admin_actions(call)
         
     elif call.data == "tdapi_add":
-        msg = bot.send_message(call.message.chat.id, "নতুন API Base URL দিন (যেমন: https://api.mail.tm):", reply_markup=back_markup())
+        msg = bot.send_message(call.message.chat.id, "নতুন Mail.td API Base URL দিন (যেমন: https://api.mail.td):", reply_markup=back_markup())
         def save_api(m):
             if m.text == "🔙 Back to Main Menu": return back_to_main(m)
             apis = db.reference('settings/mail_td_apis').get() or []
             apis.append(m.text)
             db.reference('settings/mail_td_apis').set(apis)
-            bot.send_message(m.chat.id, "✅ API Added!", reply_markup=main_menu(m.chat.id))
+            bot.send_message(m.chat.id, "✅ Mail.td API Added!", reply_markup=main_menu(m.chat.id))
         bot.register_next_step_handler(msg, save_api)
         
     elif call.data.startswith('ban_'):
@@ -390,7 +398,8 @@ def process_user_manage(message):
     markup.add(InlineKeyboardButton("🚫 Ban", callback_data=f"ban_{target_id}"), InlineKeyboardButton("✅ Unban", callback_data=f"unban_{target_id}"))
     markup.add(InlineKeyboardButton("🔙 Admin Home", callback_data="admin_home"))
     
-    bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=main_menu(message.chat.id))
+    bot.send_message(message.chat.id, "অ্যাকশন সিলেক্ট করুন:", reply_markup=markup)
 
 def send_broadcast(message):
     if message.text == "🔙 Back to Main Menu": return back_to_main(message)
@@ -411,9 +420,9 @@ def fetch_mail_for_user(chat_id, user_data):
     
     mail_info = mails[active.replace('.', ',')]
     token = mail_info.get("token")
-    api_base = mail_info.get("api_base", "https://api.mail.gw" if mail_info.get("server") == "mail.gw" else "https://api.mail.tm")
+    api_base = mail_info.get("api_base", "https://api.mail.gw" if mail_info.get("server") == "mail.gw" else "https://api.mail.td")
     
-    headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
+    headers = get_api_headers(token)
     try:
         res = requests.get(f'{api_base}/messages', headers=headers).json()
         messages = res if isinstance(res, list) else res.get('hydra:member', [])
