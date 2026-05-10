@@ -1,64 +1,87 @@
 import telebot
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 import requests
 import random
 import string
 import os
+import pyotp
 from flask import Flask
 from threading import Thread
 
-# Render-এর Environment Variables থেকে টোকেন নেবে
-# তুমি চাইলে এখানে সরাসরি "8068023821:AAEkhKKmiYcAFtv25WKr7v1hLlzMFYyQcHc" বসিয়ে টেস্ট করতে পারো
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+# আপনার দেওয়া বটের টোকেন সরাসরি বসানো হয়েছে
+BOT_TOKEN = "8068023821:AAEkhKKmiYcAFtv25WKr7v1hLlzMFYyQcHc"
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ইউজারদের ডেটা সেভ রাখার জন্য (বট রিস্টার্ট হলে ডেটা মুছে যাবে, চাইলে ডেটাবেস যুক্ত করতে পারো)
+# ইউজারদের ডেটা সেভ রাখার জন্য
 users_data = {}
 
 def generate_random_string(length=8):
     letters = string.ascii_lowercase
     return ''.join(random.choice(letters) for i in range(length))
 
+# --- নিচের বাটন মেনু (Bottom Keyboard) ---
+def main_menu():
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn_gen = KeyboardButton("✉️ Generate Mail")
+    btn_inbox = KeyboardButton("📥 Inbox")
+    btn_2fa = KeyboardButton("🔑 2FA Authenticator")
+    markup.add(btn_gen, btn_inbox)
+    markup.add(btn_2fa)
+    return markup
+
 @bot.message_handler(commands=['start'])
 def start_message(message):
-    bot.reply_to(message, "👋 Temp Mail Bot-এ স্বাগতম!\n\n✨ নতুন ইমেইল তৈরি করতে `/generate` চাপুন।\n📥 ইনবক্স চেক করতে `/inbox` চাপুন।", parse_mode="Markdown")
+    bot.reply_to(message, "👋 *Temp Mail & 2FA Bot*-এ স্বাগতম!\n\nনিচের বাটনগুলো ব্যবহার করে খুব সহজেই মেইল তৈরি, ইনবক্স চেক এবং 2FA কোড বের করতে পারবেন।", parse_mode="Markdown", reply_markup=main_menu())
 
-@bot.message_handler(commands=['generate'])
+# --- 2FA Authenticator এর কাজ ---
+@bot.message_handler(func=lambda message: message.text == "🔑 2FA Authenticator")
+def ask_2fa_secret(message):
+    msg = bot.reply_to(message, "🔐 **আপনার 2FA Secret Key (Setup Key) দিন:**\n*(যেকোনো ওয়েবসাইটের 2FA চালু করার সময় যে সিক্রেট টেক্সট দেয়, সেটি এখানে পেস্ট করুন)*", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, generate_otp_code)
+
+def generate_otp_code(message):
+    secret = message.text.strip().replace(" ", "")
+    try:
+        totp = pyotp.TOTP(secret)
+        otp_code = totp.now()
+        bot.reply_to(message, f"✅ **আপনার 2FA OTP কোড:**\n\n`{otp_code}`\n\n*(কোডটির ওপর ক্লিক করলেই কপি হয়ে যাবে)*", parse_mode="Markdown")
+    except Exception as e:
+        bot.reply_to(message, "❌ **ভুল Secret Key!** দয়া করে সঠিক Key দিন।", parse_mode="Markdown")
+
+# --- Temp Mail Generate করার কাজ ---
+@bot.message_handler(func=lambda message: message.text == "✉️ Generate Mail" or message.text == "/generate")
 def generate_mail(message):
     chat_id = message.chat.id
     bot.send_message(chat_id, "⏳ ইমেইল তৈরি হচ্ছে, একটু অপেক্ষা করুন...")
     
     try:
-        # ডোমেইন নেওয়া
         domain_res = requests.get('https://api.mail.gw/domains').json()
         domain = domain_res['hydra:member'][0]['domain']
         
-        # ইউজারনেম ও পাসওয়ার্ড বানানো
         username = generate_random_string()
         email = f"{username}@{domain}"
         password = generate_random_string(10)
         
-        # Mail.gw তে একাউন্ট তৈরি
         acc_data = {"address": email, "password": password}
         requests.post('https://api.mail.gw/accounts', json=acc_data)
         
-        # টোকেন নেওয়া
         token_res = requests.post('https://api.mail.gw/token', json=acc_data).json()
         token = token_res['token']
         
-        # ডেটা ডিকশনারিতে সেভ রাখা
         users_data[chat_id] = {"email": email, "password": password, "token": token}
         
-        msg = f"✅ **আপনার নতুন ইমেইল তৈরি হয়েছে!**\n\n📧 **ইমেইল:** `{email}`\n🔑 **পাসওয়ার্ড:** `{password}`\n\nমেইল চেক করতে `/inbox` ব্যবহার করুন।"
+        msg = f"✅ **আপনার নতুন ইমেইল তৈরি হয়েছে!**\n\n📧 **ইমেইল:** `{email}`\n🔑 **পাসওয়ার্ড:** `{password}`\n\nমেইল চেক করতে '📥 Inbox' বাটনে ক্লিক করুন।"
         bot.send_message(chat_id, msg, parse_mode="Markdown")
         
     except Exception as e:
         bot.send_message(chat_id, "❌ কোনো একটা সমস্যা হয়েছে। আবার চেষ্টা করুন।")
 
-@bot.message_handler(commands=['inbox'])
+# --- Inbox চেক করার কাজ ---
+@bot.message_handler(func=lambda message: message.text == "📥 Inbox" or message.text == "/inbox")
 def check_inbox(message):
     chat_id = message.chat.id
     if chat_id not in users_data:
-        bot.send_message(chat_id, "⚠️ আপনার কোনো ইমেইল নেই! আগে `/generate` দিয়ে ইমেইল তৈরি করুন।", parse_mode="Markdown")
+        bot.send_message(chat_id, "⚠️ আপনার কোনো ইমেইল নেই! আগে '✉️ Generate Mail' বাটনে ক্লিক করুন।")
         return
         
     token = users_data[chat_id]['token']
@@ -77,21 +100,16 @@ def check_inbox(message):
                 sender = msg['from']['address']
                 subject = msg['subject']
                 msg_id = msg['id']
-                text = f"📩 **নতুন মেইল!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** {subject}\n\nমেইলটি পড়তে নিচের কমান্ডটিতে ক্লিক করুন:\n`/read {msg_id}`"
+                text = f"📩 **নতুন মেইল!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** {subject}\n\nমেইলটি পড়তে নিচের কমান্ডটিতে ক্লিক করুন:\n`/read_{msg_id}`"
                 bot.send_message(chat_id, text, parse_mode="Markdown")
     except Exception as e:
         bot.send_message(chat_id, "❌ ইনবক্স চেক করতে সমস্যা হচ্ছে।")
 
-@bot.message_handler(commands=['read'])
+# --- মেইল পড়ার কাজ ---
+@bot.message_handler(func=lambda message: message.text.startswith('/read_'))
 def read_message(message):
     chat_id = message.chat.id
-    parts = message.text.split()
-    
-    if len(parts) < 2:
-        bot.send_message(chat_id, "⚠️ ভুল কমান্ড! সঠিক নিয়ম: `/read <message_id>`", parse_mode="Markdown")
-        return
-        
-    msg_id = parts[1]
+    msg_id = message.text.split('_')[1]
     
     if chat_id not in users_data:
         bot.send_message(chat_id, "⚠️ আপনার একাউন্ট পাওয়া যায়নি।")
@@ -107,11 +125,11 @@ def read_message(message):
     except Exception as e:
         bot.send_message(chat_id, "❌ মেইলটি পড়তে সমস্যা হচ্ছে।")
 
-# --- Render Web Service-এর পোর্ট ইস্যু ফিক্স করার জন্য Flask ---
+# --- Render Web Service-এর জন্য Flask ---
 app = Flask(__name__)
 @app.route('/')
 def index():
-    return "Bot is running perfectly!"
+    return "Bot is running perfectly on Render!"
 
 def run():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
@@ -123,4 +141,3 @@ def keep_alive():
 if __name__ == "__main__":
     keep_alive()
     bot.polling(none_stop=True)
-
