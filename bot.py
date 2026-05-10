@@ -12,13 +12,14 @@ import firebase_admin
 from firebase_admin import credentials, db
 from flask import Flask
 from threading import Thread
+from mailtd import MailTD # <-- Mail.td এর অরিজিনাল লাইব্রেরি
 
 # --- কনফিগারেশন ---
 BOT_TOKEN = "8705131481:AAF8TnG9nx1U-BZz0nXYP_jxtSWNeSQPbYY"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # অ্যাডমিন ও ডেভেলপার সেপারেশন
-ADMIN_ID = 123456789 # <--- যিনি বট চালাবেন (ক্লায়েন্ট) তার ID
+ADMIN_ID = 123456789 # <--- যিনি বট চালাবেন (আপনার ক্লায়েন্ট) তার ID
 ADMIN_USERNAME = "YourAdminUsername" # <--- ক্লায়েন্টের ইউজারনেম (বিনা @ তে)
 DEVELOPER_ID = 6670461311 # আপনার (Walid) সুপার-অ্যাডমিন ID
 SUPPORT_LINK = "https://t.me/Ad_Walid" 
@@ -30,16 +31,6 @@ try:
     cred = credentials.Certificate(firebase_cert)
     firebase_admin.initialize_app(cred, {'databaseURL': database_url})
     print("Firebase Connected Successfully!")
-    
-    # অটোমেটিক ডাটাবেস ফিক্সার (ভুল API লিংককে Key তে কনভার্ট করবে)
-    bad_apis = db.reference('settings/mail_td_apis').get()
-    if bad_apis:
-        keys = db.reference('settings/mail_td_keys').get() or []
-        for api in bad_apis:
-            if api.startswith('td_') and api not in keys:
-                keys.append(api)
-        db.reference('settings/mail_td_keys').set(keys)
-        db.reference('settings/mail_td_apis').delete()
 except Exception as e:
     print("Firebase Setup Pending or Error:", e)
 
@@ -50,8 +41,7 @@ def get_api_headers(token=None):
         'Accept': 'application/json',
         'Content-Type': 'application/json'
     }
-    if token:
-        headers['Authorization'] = f'Bearer {token}'
+    if token: headers['Authorization'] = f'Bearer {token}'
     return headers
 
 def generate_random_string(length=10):
@@ -68,6 +58,7 @@ def extract_otp(text):
     return None
 
 def clean_mail_body(text):
+    if not text: return "No content"
     text = re.sub(r'http[s]?://\S+', '', text)
     text = re.sub(r'\[.*?\]', '', text)
     text = " ".join(text.split()).replace('*', '').replace('_', '').replace('`', '')
@@ -141,6 +132,7 @@ def start_message(message):
 
     increment_stat("total_users")
     
+    # Beautiful Welcome Message
     welcome_text = "🎉 **Welcome to Premium Temp Mail Bot!** 🎉\n\n"
     welcome_text += "সোশ্যাল মিডিয়া বা যেকোনো অ্যাকাউন্ট খোলার জন্য হাই-কোয়ালিটি এবং সিকিউর মেইল জেনারেট করুন এক ক্লিকে।\n\n"
     welcome_text += "🔹 **Fast Live Inbox & OTP Scanner**\n"
@@ -217,7 +209,6 @@ def ask_2fa_secret(message):
 
 def generate_otp_code(message):
     if message.text in ["🔙 Back to Main Menu", "❌ Cancel"]: return back_to_main(message)
-        
     secret = message.text.strip().replace(" ", "")
     try:
         totp = pyotp.TOTP(secret)
@@ -226,6 +217,16 @@ def generate_otp_code(message):
         bot.reply_to(message, text, parse_mode="Markdown", reply_markup=main_menu(message.chat.id))
     except Exception:
         bot.reply_to(message, "❌ **ভুল Secret Key!** আবার চেষ্টা করুন।", reply_markup=main_menu(message.chat.id))
+
+# --- Notification Builder ---
+def build_and_send_notification(chat_id, sender, subj, text, html_content=""):
+    otp = extract_otp(subj + " " + text + " " + str(html_content))
+    clean_txt = clean_mail_body(text if text else html_content)
+    
+    notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** {subj}\n\n"
+    if otp: notification += f"🔑 **OTP / Code:**\n👉 `{otp}` 👈\n\n"
+    notification += f"📄 **Message:**\n_{clean_txt}_"
+    bot.send_message(chat_id, notification, parse_mode="Markdown")
 
 # --- Mail Generation ---
 @bot.message_handler(func=lambda m: m.text == "✨ Generate Premium Mail")
@@ -242,44 +243,57 @@ def generate_mail(message):
     success = False
     error_log = ""
     
-    # Mail.td হলে Key সহ কনফিগারেশন আনবে, না হলে Mail.gw
     if server == "mail.td":
         keys = db.reference('settings/mail_td_keys').get() or []
-        api_configs = [{"base": "https://api.mail.td", "key": k} for k in keys]
-        if not api_configs:
-            api_configs = [{"base": "https://api.mail.td", "key": None}] # Fallback if no key
-    else:
-        api_configs = [{"base": "https://api.mail.gw", "key": None}]
-    
-    for config in api_configs:
-        api_base = config['base']
-        api_key = config['key']
-        try:
-            bot.edit_message_text(f"⏳ `[■■■■■■□□□□] 60%`\nFetching Premium Domain...", user_id, loading_msg.message_id, parse_mode="Markdown")
+        if not keys:
+            bot.edit_message_text("❌ **কোনো Pro Key পাওয়া যায়নি!**\nঅ্যাডমিনকে Pannel থেকে Mail.td Key অ্যাড করতে বলুন।", user_id, loading_msg.message_id, parse_mode="Markdown")
+            return
             
-            headers = get_api_headers(api_key)
-            domain_res = requests.get(f'{api_base}/domains', headers=headers, timeout=10)
-            
-            if domain_res.status_code != 200:
-                raise Exception(f"HTTP {domain_res.status_code}")
+        for key in keys:
+            try:
+                bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nFetching Premium Domain (Mail.td)...", user_id, loading_msg.message_id, parse_mode="Markdown")
+                # MailTD Original Library Use
+                client = MailTD(key)
+                domains = client.accounts.list_domains()
+                domain = domains[0].domain if hasattr(domains[0], 'domain') else domains[0]
                 
-            domain_data = domain_res.json()
-            domain = domain_data['hydra:member'][0]['domain'] if 'hydra:member' in domain_data else domain_data[0]['domain']
+                email = f"{generate_random_string()}@{domain}"
+                password = generate_random_string(12)
+                account = client.accounts.create(email, password=password)
+                
+                bot.edit_message_text("⏳ `[■■■■■■■■■□] 90%`\nActivating Live Sync Inbox...", user_id, loading_msg.message_id, parse_mode="Markdown")
+                
+                mails = user_data.get("mails", {})
+                mails[email.replace('.', ',')] = {"token": key, "account_id": account.id, "server": "mail.td"}
+                update_user_data(user_id, {"mails": mails, "active_mail": email})
+                increment_stat("total_generated")
+                
+                bot.delete_message(user_id, loading_msg.message_id)
+                msg = f"🎉 **Premium Mail Generated!**\n\n📧 **Your Address:**\n👉 `{email}` 👈\n\n🛰️ **Server:** `{server}` API\n🟢 **Status:** Live Sync Active\n_• Listening for incoming mails..._"
+                bot.send_message(user_id, msg, parse_mode="Markdown")
+                success = True
+                break
+            except Exception as e:
+                error_log += f"\n• Key {key[:5]}... : {str(e)}"
+                continue
+    else: # mail.gw
+        try:
+            bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nFetching Default Domain (Mail.gw)...", user_id, loading_msg.message_id, parse_mode="Markdown")
+            headers = get_api_headers()
+            domain_res = requests.get('https://api.mail.gw/domains', headers=headers, timeout=10).json()
+            domain = domain_res['hydra:member'][0]['domain'] if 'hydra:member' in domain_res else domain_res[0]['domain']
             
             email = f"{generate_random_string()}@{domain}"
             password = generate_random_string(12)
             acc_data = {"address": email, "password": password}
             
-            acc_res = requests.post(f'{api_base}/accounts', json=acc_data, headers=headers, timeout=10)
-            if acc_res.status_code not in [200, 201]:
-                raise Exception(f"Account Failed: {acc_res.status_code}")
+            requests.post('https://api.mail.gw/accounts', json=acc_data, headers=headers, timeout=10)
             
             bot.edit_message_text("⏳ `[■■■■■■■■■□] 90%`\nActivating Live Sync Inbox...", user_id, loading_msg.message_id, parse_mode="Markdown")
-            token_res = requests.post(f'{api_base}/token', json=acc_data, headers=headers, timeout=10).json()
-            token = token_res['token']
+            token_res = requests.post('https://api.mail.gw/token', json=acc_data, headers=headers, timeout=10).json()
             
             mails = user_data.get("mails", {})
-            mails[email.replace('.', ',')] = {"token": token, "server": server, "api_base": api_base}
+            mails[email.replace('.', ',')] = {"token": token_res['token'], "server": "mail.gw"}
             update_user_data(user_id, {"mails": mails, "active_mail": email})
             increment_stat("total_generated")
             
@@ -287,13 +301,11 @@ def generate_mail(message):
             msg = f"🎉 **Premium Mail Generated!**\n\n📧 **Your Address:**\n👉 `{email}` 👈\n\n🛰️ **Server:** `{server}` API\n🟢 **Status:** Live Sync Active\n_• Listening for incoming mails..._"
             bot.send_message(user_id, msg, parse_mode="Markdown")
             success = True
-            break
         except Exception as e:
-            error_log += f"\n• Key {api_key[:5] if api_key else 'None'}... : {str(e)}"
-            continue
-            
+            error_log += f"\n• Mail.gw Error: {str(e)}"
+
     if not success:
-        err_msg = f"❌ **সার্ভার সাময়িক ডাউন আছে!**\n\n🔍 **Error Log:**`{error_log}`\n\nদয়া করে অন্য সার্ভার (Mail.gw) ট্রাই করুন অথবা অ্যাডমিন প্যানেলে সঠিক Pro Key যুক্ত করুন।"
+        err_msg = f"❌ **সার্ভার সাময়িক ডাউন আছে!**\n\n🔍 **Error Log:**`{error_log}`\n\nদয়া করে অন্য সার্ভার ট্রাই করুন অথবা অ্যাডমিনকে জানান।"
         bot.edit_message_text(err_msg, user_id, loading_msg.message_id, parse_mode="Markdown")
 
 # --- Manual Inbox ---
@@ -313,44 +325,49 @@ def check_inbox(message):
     loading_msg = bot.send_message(user_id, "🔄 **Scanning Live Inbox...**\n_Checking for latest OTPs..._", parse_mode="Markdown")
     
     mail_info = mails[active.replace('.', ',')]
-    account_token = mail_info.get("token")
-    api_base = mail_info.get("api_base", "https://api.mail.gw")
-    headers = get_api_headers(account_token)
+    server = mail_info.get("server", "mail.gw")
+    seen_key = f"users/{user_id}/mails/{active.replace('.', ',')}/seen"
+    seen_msgs = db.reference(seen_key).get() or []
+    new_mail_found = False
     
     try:
-        res = requests.get(f'{api_base}/messages', headers=headers, timeout=10)
-        if res.status_code != 200:
-            bot.edit_message_text(f"❌ **API Connection Error ({res.status_code})**", user_id, loading_msg.message_id, parse_mode="Markdown")
-            return
+        if server == "mail.td":
+            client = MailTD(mail_info.get("token"))
+            account_id = mail_info.get("account_id")
+            messages, _ = client.messages.list(account_id)
             
-        messages = res.json()
-        messages = messages if isinstance(messages, list) else messages.get('hydra:member', [])
-        seen_key = f"users/{user_id}/mails/{active.replace('.', ',')}/seen"
-        seen_msgs = db.reference(seen_key).get() or []
-        
-        new_mail_found = False
-        
-        for msg in messages:
-            msg_id = msg['id']
-            if msg_id not in seen_msgs:
-                seen_msgs.append(msg_id)
-                db.reference(seen_key).set(seen_msgs)
-                new_mail_found = True
-                
-                full_msg = requests.get(f'{api_base}/messages/{msg_id}', headers=headers).json()
-                text = full_msg.get('text', '') or full_msg.get('intro', '')
-                subj = msg.get('subject', 'No Subject')
-                sender = msg['from'].get('address', 'Unknown') if isinstance(msg.get('from'), dict) else msg.get('from', 'Unknown')
-                
-                otp = extract_otp(subj + " " + text)
-                clean_txt = clean_mail_body(text)
-                
-                notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** {subj}\n\n"
-                if otp: notification += f"🔑 **OTP / Code:**\n👉 `{otp}` 👈\n\n"
-                notification += f"📄 **Message:**\n_{clean_txt}_"
-                
-                bot.send_message(user_id, notification, parse_mode="Markdown")
-                
+            for msg_preview in messages:
+                msg_id = msg_preview.id
+                if msg_id not in seen_msgs:
+                    seen_msgs.append(msg_id)
+                    db.reference(seen_key).set(seen_msgs)
+                    new_mail_found = True
+                    
+                    full_msg = client.messages.get(account_id, msg_id)
+                    subj = getattr(full_msg, 'subject', 'No Subject')
+                    sender = getattr(full_msg, 'from_address', getattr(full_msg, 'sender', 'Unknown'))
+                    text = getattr(full_msg, 'text_body', '')
+                    html_body = getattr(full_msg, 'html_body', '')
+                    build_and_send_notification(user_id, sender, subj, text, html_body)
+                    
+        else: # mail.gw
+            headers = get_api_headers(mail_info.get("token"))
+            res = requests.get('https://api.mail.gw/messages', headers=headers, timeout=10).json()
+            messages = res if isinstance(res, list) else res.get('hydra:member', [])
+            
+            for msg in messages:
+                msg_id = msg['id']
+                if msg_id not in seen_msgs:
+                    seen_msgs.append(msg_id)
+                    db.reference(seen_key).set(seen_msgs)
+                    new_mail_found = True
+                    
+                    full_msg = requests.get(f'https://api.mail.gw/messages/{msg_id}', headers=headers).json()
+                    subj = msg.get('subject', 'No Subject')
+                    sender = msg['from'].get('address', 'Unknown') if isinstance(msg.get('from'), dict) else msg.get('from', 'Unknown')
+                    text = full_msg.get('text', '') or full_msg.get('intro', '')
+                    build_and_send_notification(user_id, sender, subj, text)
+                    
         if not new_mail_found:
             bot.edit_message_text("📭 **কোনো নতুন মেইল বা OTP আসেনি!**\n\n_দয়া করে ওয়েবসাইট থেকে কোডটি আবার Resend করুন অথবা কিছুক্ষণ অপেক্ষা করুন।_", user_id, loading_msg.message_id, parse_mode="Markdown")
         else:
@@ -442,8 +459,7 @@ def admin_actions(call):
                 f.write(txt_content)
             with open("user_details.txt", "rb") as f:
                 bot.send_document(call.message.chat.id, f, caption="📝 **Full User Details List**", parse_mode="Markdown")
-        except Exception as e:
-            bot.send_message(call.message.chat.id, "Error generating file.")
+        except: bot.send_message(call.message.chat.id, "Error generating file.")
 
     elif action == "fsub":
         channel = db.reference('settings/force_sub').get() or "Not Set"
@@ -547,34 +563,42 @@ def fetch_mail_for_user(chat_id, user_data):
     if not active or active.replace('.', ',') not in mails: return
     
     mail_info = mails[active.replace('.', ',')]
-    account_token = mail_info.get("token")
-    api_base = mail_info.get("api_base", "https://api.mail.gw")
+    server = mail_info.get("server", "mail.gw")
+    seen_key = f"users/{chat_id}/mails/{active.replace('.', ',')}/seen"
+    seen_msgs = db.reference(seen_key).get() or []
     
-    headers = get_api_headers(account_token)
     try:
-        res = requests.get(f'{api_base}/messages', headers=headers).json()
-        messages = res if isinstance(res, list) else res.get('hydra:member', [])
-        seen_key = f"users/{chat_id}/mails/{active.replace('.', ',')}/seen"
-        seen_msgs = db.reference(seen_key).get() or []
-        
-        for msg in messages:
-            msg_id = msg['id']
-            if msg_id not in seen_msgs:
-                seen_msgs.append(msg_id)
-                db.reference(seen_key).set(seen_msgs)
-                
-                full_msg = requests.get(f'{api_base}/messages/{msg_id}', headers=headers).json()
-                text = full_msg.get('text', '') or full_msg.get('intro', '')
-                subj = msg.get('subject', 'No Subject')
-                sender = msg['from'].get('address', 'Unknown') if isinstance(msg.get('from'), dict) else msg.get('from', 'Unknown')
-                
-                otp = extract_otp(subj + " " + text)
-                clean_txt = clean_mail_body(text)
-                
-                notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** {subj}\n\n"
-                if otp: notification += f"🔑 **OTP / Code:**\n👉 `{otp}` 👈\n\n"
-                notification += f"📄 **Message:**\n_{clean_txt}_"
-                bot.send_message(chat_id, notification, parse_mode="Markdown")
+        if server == "mail.td":
+            client = MailTD(mail_info.get("token"))
+            account_id = mail_info.get("account_id")
+            messages, _ = client.messages.list(account_id)
+            
+            for msg_preview in messages:
+                msg_id = msg_preview.id
+                if msg_id not in seen_msgs:
+                    seen_msgs.append(msg_id)
+                    db.reference(seen_key).set(seen_msgs)
+                    full_msg = client.messages.get(account_id, msg_id)
+                    subj = getattr(full_msg, 'subject', 'No Subject')
+                    sender = getattr(full_msg, 'from_address', getattr(full_msg, 'sender', 'Unknown'))
+                    text = getattr(full_msg, 'text_body', '')
+                    html_body = getattr(full_msg, 'html_body', '')
+                    build_and_send_notification(chat_id, sender, subj, text, html_body)
+        else:
+            headers = get_api_headers(mail_info.get("token"))
+            res = requests.get('https://api.mail.gw/messages', headers=headers).json()
+            messages = res if isinstance(res, list) else res.get('hydra:member', [])
+            
+            for msg in messages:
+                msg_id = msg['id']
+                if msg_id not in seen_msgs:
+                    seen_msgs.append(msg_id)
+                    db.reference(seen_key).set(seen_msgs)
+                    full_msg = requests.get(f'https://api.mail.gw/messages/{msg_id}', headers=headers).json()
+                    subj = msg.get('subject', 'No Subject')
+                    sender = msg['from'].get('address', 'Unknown') if isinstance(msg.get('from'), dict) else msg.get('from', 'Unknown')
+                    text = full_msg.get('text', '') or full_msg.get('intro', '')
+                    build_and_send_notification(chat_id, sender, subj, text)
     except: pass
 
 def auto_check_inbox():
@@ -584,7 +608,7 @@ def auto_check_inbox():
             for chat_id, data in users.items():
                 fetch_mail_for_user(chat_id, data)
         except: pass
-        time.sleep(10)
+        time.sleep(5)
 
 # --- Flask & Run ---
 app = Flask(__name__)
