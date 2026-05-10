@@ -18,8 +18,8 @@ BOT_TOKEN = "8705131481:AAF8TnG9nx1U-BZz0nXYP_jxtSWNeSQPbYY"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # আপনার টেলিগ্রাম ইউজার আইডি এখানে দিন (Admin হিসেবে কাজ করার জন্য)
-ADMIN_ID = 123456789 # <--- এটি পরিবর্তন করে আপনার ID দিন
-SUPPORT_USERNAME = "@YourUsername" # <--- আপনার ইউজারনেম দিন
+ADMIN_ID = 6670461311 # <--- এটি পরিবর্তন করে আপনার ID দিন
+SUPPORT_USERNAME = "@Ad_Walid" # <--- আপনার ইউজারনেম দিন
 
 # --- Firebase সেটআপ ---
 # Render Environment Variable থেকে Firebase Credentials নেবে
