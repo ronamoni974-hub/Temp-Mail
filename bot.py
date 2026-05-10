@@ -14,12 +14,11 @@ from flask import Flask
 from threading import Thread
 
 # --- কনফিগারেশন ---
-# টোকেন একদম ফিক্সড করা হলো যাতে Render কোনো এরর না দেয়
 BOT_TOKEN = "8705131481:AAF8TnG9nx1U-BZz0nXYP_jxtSWNeSQPbYY"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # অ্যাডমিন ও ডেভেলপার সেপারেশন
-ADMIN_ID = 123456789 # <--- যিনি বটটি চালাবেন (আপনার ক্লায়েন্ট) তার ID দিন
+ADMIN_ID = 123456789 # <--- আপনার ক্লায়েন্টের ID দিন
 ADMIN_USERNAME = "AdminUsername" # <--- ক্লায়েন্টের ইউজারনেম দিন (বিনা @ তে)
 DEVELOPER_ID = 6670461311 # আপনার সুপার-অ্যাডমিন ID
 SUPPORT_LINK = "https://t.me/Ad_Walid" 
@@ -138,7 +137,6 @@ def start_message(message):
 
     increment_stat("total_users")
     
-    # Premium Welcome Message
     welcome_text = "🎉 **Welcome to Premium Temp Mail Bot!** 🎉\n\n"
     welcome_text += "সোশ্যাল মিডিয়া বা যেকোনো অ্যাকাউন্ট খোলার জন্য হাই-কোয়ালিটি এবং সিকিউর মেইল জেনারেট করুন এক ক্লিকে।\n\n"
     welcome_text += "🔹 **Fast Live Inbox & OTP Scanner**\n"
@@ -225,7 +223,7 @@ def generate_otp_code(message):
     except Exception:
         bot.reply_to(message, "❌ **ভুল Secret Key!** আবার চেষ্টা করুন।", reply_markup=main_menu(message.chat.id))
 
-# --- Mail Generation ---
+# --- Mail Generation (With Error Tracker) ---
 @bot.message_handler(func=lambda m: m.text == "✨ Generate Premium Mail")
 def generate_mail(message):
     user_id = message.chat.id
@@ -238,21 +236,29 @@ def generate_mail(message):
     loading_msg = bot.send_message(user_id, "⏳ `[■■□□□□□□□□] 20%`\nConnecting to Secure API...", parse_mode="Markdown")
     
     success = False
-    api_list = ["https://api.mail.gw"] if server == "mail.gw" else (db.reference('settings/mail_td_apis').get() or ["https://api.mail.td", "https://api.mail.tm"])
+    error_log = ""
+    api_list = ["https://api.mail.gw"] if server == "mail.gw" else (db.reference('settings/mail_td_apis').get() or ["https://api.mail.tm"])
     
     for api_base in api_list:
         try:
-            bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nFetching Premium Domain...", user_id, loading_msg.message_id, parse_mode="Markdown")
+            bot.edit_message_text(f"⏳ `[■■■■■■□□□□] 60%`\nFetching Premium Domain from `{api_base}`...", user_id, loading_msg.message_id, parse_mode="Markdown")
             
             headers = get_api_headers()
-            domain_res = requests.get(f'{api_base}/domains', headers=headers, timeout=10).json()
-            domain = domain_res['hydra:member'][0]['domain'] if 'hydra:member' in domain_res else domain_res[0]['domain']
+            domain_res = requests.get(f'{api_base}/domains', headers=headers, timeout=10)
+            
+            if domain_res.status_code != 200:
+                raise Exception(f"HTTP Error {domain_res.status_code}")
+                
+            domain_data = domain_res.json()
+            domain = domain_data['hydra:member'][0]['domain'] if 'hydra:member' in domain_data else domain_data[0]['domain']
             
             email = f"{generate_random_string()}@{domain}"
             password = generate_random_string(12)
             acc_data = {"address": email, "password": password}
             
-            requests.post(f'{api_base}/accounts', json=acc_data, headers=headers, timeout=10)
+            acc_res = requests.post(f'{api_base}/accounts', json=acc_data, headers=headers, timeout=10)
+            if acc_res.status_code not in [200, 201]:
+                raise Exception(f"Account Creation Failed: {acc_res.status_code}")
             
             bot.edit_message_text("⏳ `[■■■■■■■■■□] 90%`\nActivating Live Sync Inbox...", user_id, loading_msg.message_id, parse_mode="Markdown")
             token_res = requests.post(f'{api_base}/token', json=acc_data, headers=headers, timeout=10).json()
@@ -269,12 +275,14 @@ def generate_mail(message):
             success = True
             break
         except Exception as e:
+            error_log += f"\n• `{api_base}`: {str(e)}"
             continue
             
     if not success:
-        bot.edit_message_text("❌ **সার্ভার সাময়িক ডাউন আছে!**\nদয়া করে অন্য সার্ভার (Mail.gw) ট্রাই করুন অথবা কিছুক্ষণ পর আবার চেষ্টা করুন।", user_id, loading_msg.message_id, parse_mode="Markdown")
+        err_msg = f"❌ **সার্ভার সাময়িক ডাউন আছে!**\n\n🔍 **Error Log (For Developer):**\n`{error_log}`\n\nদয়া করে অন্য সার্ভার (Mail.gw) ট্রাই করুন অথবা কিছুক্ষণ পর আবার চেষ্টা করুন।"
+        bot.edit_message_text(err_msg, user_id, loading_msg.message_id, parse_mode="Markdown")
 
-# --- Manual Inbox (Loading Animation Added) ---
+# --- Manual Inbox ---
 @bot.message_handler(func=lambda m: m.text == "📥 Inbox")
 def check_inbox(message):
     user_id = message.chat.id
@@ -292,12 +300,17 @@ def check_inbox(message):
     
     mail_info = mails[active.replace('.', ',')]
     token = mail_info.get("token")
-    api_base = mail_info.get("api_base", "https://api.mail.gw" if mail_info.get("server") == "mail.gw" else "https://api.mail.td")
+    api_base = mail_info.get("api_base", "https://api.mail.gw" if mail_info.get("server") == "mail.gw" else "https://api.mail.tm")
     headers = get_api_headers(token)
     
     try:
-        res = requests.get(f'{api_base}/messages', headers=headers, timeout=10).json()
-        messages = res if isinstance(res, list) else res.get('hydra:member', [])
+        res = requests.get(f'{api_base}/messages', headers=headers, timeout=10)
+        if res.status_code != 200:
+            bot.edit_message_text(f"❌ **API Connection Error ({res.status_code})**", user_id, loading_msg.message_id, parse_mode="Markdown")
+            return
+            
+        messages = res.json()
+        messages = messages if isinstance(messages, list) else messages.get('hydra:member', [])
         seen_key = f"users/{user_id}/mails/{active.replace('.', ',')}/seen"
         seen_msgs = db.reference(seen_key).get() or []
         
@@ -330,7 +343,7 @@ def check_inbox(message):
             bot.delete_message(user_id, loading_msg.message_id)
             
     except Exception as e:
-        bot.edit_message_text("❌ **Network Error!** ইনবক্স চেক করতে সমস্যা হচ্ছে।", user_id, loading_msg.message_id, parse_mode="Markdown")
+        bot.edit_message_text(f"❌ **Network Error!**\nDetails: `{str(e)}`", user_id, loading_msg.message_id, parse_mode="Markdown")
 
 # --- Dashboard ---
 @bot.message_handler(func=lambda m: m.text == "🎛️ Dashboard")
@@ -426,7 +439,7 @@ def admin_actions(call):
         bot.edit_message_text(f"📢 **Force Sub Channel**\nCurrent: `{channel}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
 
     elif action == "tdapis":
-        apis = db.reference('settings/mail_td_apis').get() or ["https://api.mail.td", "https://api.mail.tm"]
+        apis = db.reference('settings/mail_td_apis').get() or ["https://api.mail.tm"]
         text = "🔗 **Mail.td APIs Management:**\n_(Delete one by one)_"
         markup = InlineKeyboardMarkup(row_width=1)
         for i, api in enumerate(apis):
@@ -463,14 +476,14 @@ def admin_sub_actions(call):
         apis = db.reference('settings/mail_td_apis').get() or []
         if 0 <= idx < len(apis):
             del apis[idx]
-            if not apis: apis = ["https://api.mail.td"] 
+            if not apis: apis = ["https://api.mail.tm"] 
             db.reference('settings/mail_td_apis').set(apis)
             bot.answer_callback_query(call.id, "API Deleted Successfully!")
             call.data = "admin_tdapis"
             admin_actions(call)
             
     elif call.data == "tdapi_add":
-        msg = bot.send_message(call.message.chat.id, "নতুন Mail.td API Base URL দিন (যেমন: https://api.mail.td):", reply_markup=back_markup())
+        msg = bot.send_message(call.message.chat.id, "নতুন Mail API Base URL দিন (যেমন: https://api.mail.tm):", reply_markup=back_markup())
         def save_api(m):
             if m.text in ["🔙 Back to Main Menu", "❌ Cancel"]: return back_to_main(m)
             apis = db.reference('settings/mail_td_apis').get() or []
@@ -521,7 +534,7 @@ def fetch_mail_for_user(chat_id, user_data):
     
     mail_info = mails[active.replace('.', ',')]
     token = mail_info.get("token")
-    api_base = mail_info.get("api_base", "https://api.mail.gw" if mail_info.get("server") == "mail.gw" else "https://api.mail.td")
+    api_base = mail_info.get("api_base", "https://api.mail.gw" if mail_info.get("server") == "mail.gw" else "https://api.mail.tm")
     
     headers = get_api_headers(token)
     try:
