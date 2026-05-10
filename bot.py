@@ -44,6 +44,21 @@ def extract_otp(text):
         
     return None
 
+def clean_mail_body(text):
+    # সমস্ত URL এবং লিংক মুছে ফেলা
+    text = re.sub(r'http[s]?://\S+', '', text)
+    # ব্র্যাকেট ও ফালতু কোড মুছে ফেলা
+    text = re.sub(r'\[.*?\]', '', text)
+    # স্পেস ও এন্টার ঠিক করা
+    text = " ".join(text.split())
+    # Markdown এরর এড়াতে স্পেশাল ক্যারেক্টার রিমুভ করা
+    text = text.replace('*', '').replace('_', '').replace('`', '')
+    
+    # মেসেজ ছোট করা (শুধুমাত্র প্রথম ১০০ অক্ষর দেখাবে)
+    if len(text) > 100:
+        return text[:100] + "..."
+    return text
+
 # --- UI Elements ---
 def main_menu():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -75,12 +90,7 @@ def fetch_and_send_mails(chat_id, data, is_manual=False):
             return
             
         res_data = res.json()
-        
-        if isinstance(res_data, list):
-            messages = res_data
-        else:
-            messages = res_data.get('hydra:member', [])
-            
+        messages = res_data if isinstance(res_data, list) else res_data.get('hydra:member', [])
         new_mail_found = False
         
         for msg in messages:
@@ -94,31 +104,23 @@ def fetch_and_send_mails(chat_id, data, is_manual=False):
                 if full_msg_res.status_code == 200:
                     full_msg = full_msg_res.json()
                     
-                    # HTML বা Intro সাপোর্ট যুক্ত করা হলো
-                    text_content = full_msg.get('text', '')
-                    if not text_content:
-                        text_content = full_msg.get('intro', '')
-                        
+                    text_content = full_msg.get('text', '') or full_msg.get('intro', '')
                     subject = msg.get('subject', 'No Subject')
-                    
-                    if isinstance(msg.get('from'), dict):
-                        sender = msg['from'].get('address', 'Unknown')
-                    else:
-                        sender = msg.get('from', 'Unknown')
+                    sender = msg['from'].get('address', 'Unknown') if isinstance(msg.get('from'), dict) else msg.get('from', 'Unknown')
                     
                     otp = extract_otp(subject + " " + text_content)
+                    clean_text = clean_mail_body(text_content)
                     
-                    notification = f"🔔 **NEW MAIL RECEIVED!** 🔔\n\n"
+                    # Premium Short Notification
+                    notification = f"🔔 **NEW MAIL RECEIVED!**\n\n"
                     notification += f"👤 **From:** `{sender}`\n"
                     notification += f"📌 **Subject:** {subject}\n\n"
                     
                     if otp:
-                        notification += f"🔑 **Scanned Code/OTP:**\n"
+                        notification += f"🔑 **OTP / Code:**\n"
                         notification += f"👉 `{otp}` 👈\n\n"
                     
-                    # ক্লিন মেসেজ বডি
-                    clean_text = text_content[:300].replace('*', '').replace('_', '')
-                    notification += f"📄 **Message:**\n_{clean_text}..._"
+                    notification += f"📄 **Message:**\n_{clean_text}_"
                     
                     bot.send_message(chat_id, notification, parse_mode="Markdown")
         
@@ -127,14 +129,14 @@ def fetch_and_send_mails(chat_id, data, is_manual=False):
             
     except Exception as e:
         if is_manual:
-            bot.send_message(chat_id, "❌ ইনবক্স চেক করতে সমস্যা হচ্ছে। সার্ভার ব্যস্ত থাকতে পারে।")
+            bot.send_message(chat_id, "❌ ইনবক্স চেক করতে সমস্যা হচ্ছে।")
 
 # --- Auto Inbox Checker ---
 def auto_check_inbox():
     while True:
         for chat_id, data in list(users_data.items()):
             fetch_and_send_mails(chat_id, data, is_manual=False)
-        time.sleep(10) # রেট লিমিট এড়াতে টাইম বাড়ানো হলো
+        time.sleep(10)
 
 # --- Handlers ---
 @bot.message_handler(commands=['start'])
@@ -152,7 +154,8 @@ def generate_otp_code(message):
         totp = pyotp.TOTP(secret)
         otp_code = totp.now()
         
-        text = f"✅ **2FA Authenticator Code:**\n\n"
+        # Premium 2FA Minimal UI
+        text = f"🛡️ **2FA Authenticator Code**\n\n"
         text += f"👉 `{otp_code}` 👈"
         
         bot.reply_to(message, text, parse_mode="Markdown")
@@ -163,12 +166,12 @@ def generate_otp_code(message):
 def generate_mail(message):
     chat_id = message.chat.id
     
-    loading_msg = bot.send_message(chat_id, "⏳ `[■■□□□□□□□□] 20%`\nConnecting to server...", parse_mode="Markdown")
+    loading_msg = bot.send_message(chat_id, "⏳ `[■■□□□□□□□□] 20%`\nConnecting...", parse_mode="Markdown")
     
     try:
         domain_res = requests.get('https://api.mail.gw/domains', headers=API_HEADERS)
         if domain_res.status_code != 200:
-            bot.edit_message_text(f"❌ API Error (Domain): {domain_res.status_code}", chat_id, loading_msg.message_id)
+            bot.edit_message_text(f"❌ API Error", chat_id, loading_msg.message_id)
             return
             
         domain_data = domain_res.json()
@@ -180,7 +183,7 @@ def generate_mail(message):
         else:
             domain = 'mail.gw' 
             
-        bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nGenerating domain address...", chat_id, loading_msg.message_id, parse_mode="Markdown")
+        bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nGenerating email...", chat_id, loading_msg.message_id, parse_mode="Markdown")
         
         username = generate_random_string(10)
         email = f"{username}@{domain}"
@@ -189,14 +192,14 @@ def generate_mail(message):
         
         acc_res = requests.post('https://api.mail.gw/accounts', json=acc_data, headers=API_HEADERS)
         if acc_res.status_code not in [200, 201]:
-            bot.edit_message_text(f"❌ Registration Error! Try again.", chat_id, loading_msg.message_id)
+            bot.edit_message_text(f"❌ Registration Error!", chat_id, loading_msg.message_id)
             return
 
-        bot.edit_message_text("⏳ `[■■■■■■■■■□] 90%`\nActivating Live Inbox...", chat_id, loading_msg.message_id, parse_mode="Markdown")
+        bot.edit_message_text("⏳ `[■■■■■■■■■□] 90%`\nActivating Inbox...", chat_id, loading_msg.message_id, parse_mode="Markdown")
         
         token_res = requests.post('https://api.mail.gw/token', json=acc_data, headers=API_HEADERS)
         if token_res.status_code not in [200, 201]:
-            bot.edit_message_text(f"❌ Token Error! Try again.", chat_id, loading_msg.message_id)
+            bot.edit_message_text(f"❌ Token Error!", chat_id, loading_msg.message_id)
             return
             
         token_data = token_res.json()
@@ -210,21 +213,20 @@ def generate_mail(message):
         
         bot.delete_message(chat_id, loading_msg.message_id)
         
-        final_msg = f"✨ **Premium Mail Generated Successfully!** ✨\n\n"
+        final_msg = f"✨ **Premium Mail Generated!**\n\n"
         final_msg += f"👉 `{email}` 👈\n\n"
-        final_msg += f"🟢 **Live Status: Active & Listening...**\n"
-        final_msg += f"_(যেকোনো মেইল বা OTP আসলে এখানে অটোমেটিক শো করবে।)_"
+        final_msg += f"🟢 **Live Status: Active & Listening...**"
         
         bot.send_message(chat_id, final_msg, parse_mode="Markdown")
         
     except Exception as e:
-        bot.edit_message_text(f"❌ Server Error! Detail: {str(e)}", chat_id, loading_msg.message_id)
+        bot.edit_message_text(f"❌ Server Error!", chat_id, loading_msg.message_id)
 
 @bot.message_handler(func=lambda message: message.text == "📥 Inbox" or message.text == "/inbox")
 def check_inbox(message):
     chat_id = message.chat.id
     if chat_id not in users_data:
-        bot.send_message(chat_id, "⚠️ আপনার কোনো ইমেইল নেই! আগে '✨ Generate Premium Mail' এ ক্লিক করুন।")
+        bot.send_message(chat_id, "⚠️ আগে '✨ Generate Premium Mail' এ ক্লিক করুন।")
         return
         
     bot.send_message(chat_id, "🔄 ইনবক্স চেক করা হচ্ছে...")
