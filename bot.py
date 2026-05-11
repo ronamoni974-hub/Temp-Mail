@@ -61,8 +61,10 @@ def extract_otp(text):
 def clean_mail_body(text):
     if not text: return "No content"
     text = str(text)
-    # Remove unwanted URLs (http/https links)
-    text = re.sub(r'\[?https?://\S+\]?', '', text)
+    # অপ্রয়োজনীয় লিংক [http...] বা রেগুলার লিংক রিমুভ করা
+    text = re.sub(r'\[http[^\]]+\]', '', text)
+    text = re.sub(r'http[s]?://\S+', '', text)
+    
     text = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r'<[^>]+>', ' ', text)
     text = html.unescape(text)
@@ -91,7 +93,13 @@ def get_stats():
         data = db.reference('stats').get()
         if isinstance(data, dict): return data
     except: pass
-    return {"total_users": 0, "total_generated": 0, "total_deleted": 0}
+    return {
+        "total_users": 0, 
+        "total_generated": 0, 
+        "total_deleted": 0,
+        "total_generated_mail_td": 0,
+        "total_generated_mail_gw": 0
+    }
 
 def check_force_sub(user_id):
     try:
@@ -131,7 +139,7 @@ def start_message(message):
         user_data = get_user_data(user_id)
         
         if user_data.get("banned"):
-            bot.reply_to(message, "❌ **Account Banned!**\nআপনি এই বটটি আর ব্যবহার করতে পারবেন না।", parse_mode="Markdown")
+            bot.reply_to(message, "❌ **Account Banned!**\nআপনি এই বটটি আর ব্যবহার করতে পারবেন গ্যা।", parse_mode="Markdown")
             return
             
         # Save User Info for TXT List
@@ -154,7 +162,7 @@ def start_message(message):
         welcome_text = "🎉 **Welcome to Temp Mail Bot!** 🎉\n\n"
         welcome_text += "সোশ্যাল মিডিয়া বা যেকোনো অ্যাকাউন্ট খোলার জন্য হাই-কোয়ালিটি এবং সিকিউর মেইল জেনারেট করুন এক ক্লিকে।\n\n"
         welcome_text += "🔹 **Fast Live Inbox & OTP Scanner**\n"
-        welcome_text += "🔹 **Mail.td Pro Integration**\n"
+        welcome_text += "🔹 **Mail.td Integration**\n"
         welcome_text += "🔹 **Secure 2FA Authenticator**\n\n"
         welcome_text += "👇 *নিচের মেনু থেকে আপনার প্রয়োজনীয় সার্ভিসটি বেছে নিন:*"
         
@@ -185,8 +193,8 @@ def server_menu(message):
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton(f"{'✅' if current=='mail.td' else '🌐'} Pro Mail.td", callback_data="srv_mail.td"),
-        InlineKeyboardButton(f"{'✅' if current=='mail.gw' else '🌐'} Default Mail.gw", callback_data="srv_mail.gw")
+        InlineKeyboardButton(f"{'✅' if current=='mail.td' else '🌐'} Server Mail.td", callback_data="srv_mail.td"),
+        InlineKeyboardButton(f"{'✅' if current=='mail.gw' else '🌐'} Server Mail.gw", callback_data="srv_mail.gw")
     )
     bot.send_message(user_id, f"🌐 **Current Active Server:** `{current}`\n\nযেকোনো সোশ্যাল মিডিয়া অ্যাকাউন্ট খুলতে হাই-কোয়ালিটি সার্ভার বেছে নিন:", parse_mode="Markdown", reply_markup=markup)
 
@@ -256,17 +264,15 @@ def build_and_send_notification(chat_id, sender, subj, text, html_content=""):
         main_notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** `{subj}`\n"
         
         if otp:
-            # OTP ফরম্যাট: লেখার পাশেই কোড
+            # OTP কোডটি লাইনের সাথেই বসবে
             main_notification += f"\nYour Verification Code : `{otp}`\n\n"
             
         main_notification += f"📄 **Message:**\n_{clean_txt}_"
         
-        # শুধুমাত্র Refresh বাটন
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🔄 Refresh Inbox", callback_data="refresh_inbox"))
         
-        # disable_web_page_preview=True যুক্ত করা হয়েছে যাতে বড় ছবির প্রিভিউ না আসে
-        bot.send_message(chat_id, main_notification, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
+        bot.send_message(chat_id, main_notification, parse_mode="Markdown", reply_markup=markup)
     except Exception as e:
         print(f"Notification Error: {e}")
 
@@ -298,7 +304,7 @@ def generate_mail(message):
     if server == "mail.td":
         keys = db.reference('settings/mail_td_keys').get() or []
         if not keys:
-            bot.edit_message_text("❌ **কোনো Pro Key পাওয়া যায়নি!**\nঅ্যাডমিনকে Pannel থেকে Mail.td Key অ্যাড করতে বলুন।", user_id, loading_msg.message_id, parse_mode="Markdown")
+            bot.edit_message_text("❌ **কোনো API Key পাওয়া যায়নি!**\nঅ্যাডমিনকে Pannel থেকে Mail.td Key অ্যাড করতে বলুন।", user_id, loading_msg.message_id, parse_mode="Markdown")
             return
             
         for key in keys:
@@ -318,7 +324,10 @@ def generate_mail(message):
                 if not isinstance(mails, dict): mails = {}
                 mails[email.replace('.', ',')] = {"token": key, "account_id": account.id, "server": "mail.td"}
                 update_user_data(user_id, {"mails": mails, "active_mail": email})
+                
+                # Update Stats
                 increment_stat("total_generated")
+                increment_stat("total_generated_mail_td")
                 
                 bot.delete_message(user_id, loading_msg.message_id)
                 msg = f"🎉 **Mail Generated!**\n\n📧 **Your Address:**\n👉 `{email}` 👈\n\n🛰️ **Server:** `{server}` API\n🟢 **Status:** Live Sync Active\n_• Listening for incoming mails..._"
@@ -348,7 +357,10 @@ def generate_mail(message):
             if not isinstance(mails, dict): mails = {}
             mails[email.replace('.', ',')] = {"token": token_res['token'], "server": "mail.gw"}
             update_user_data(user_id, {"mails": mails, "active_mail": email})
+            
+            # Update Stats
             increment_stat("total_generated")
+            increment_stat("total_generated_mail_gw")
             
             bot.delete_message(user_id, loading_msg.message_id)
             msg = f"🎉 **Mail Generated!**\n\n📧 **Your Address:**\n👉 `{email}` 👈\n\n🛰️ **Server:** `{server}` API\n🟢 **Status:** Live Sync Active\n_• Listening for incoming mails..._"
@@ -479,7 +491,7 @@ def get_admin_markup():
                InlineKeyboardButton("📝 User List (TXT)", callback_data="admin_usertxt"))
     markup.add(InlineKeyboardButton("📊 Statistics", callback_data="admin_stats"),
                InlineKeyboardButton("📢 Force Sub Channel", callback_data="admin_fsub"))
-    markup.add(InlineKeyboardButton("🔑 Manage Pro Keys", callback_data="admin_tdkeys"),
+    markup.add(InlineKeyboardButton("🔑 Manage API Keys", callback_data="admin_tdkeys"),
                InlineKeyboardButton("✉️ Broadcast", callback_data="admin_notice"))
     return markup
 
@@ -505,7 +517,10 @@ def admin_actions(call):
             tu = len(users)
             tg = stats.get('total_generated', 0)
             td = stats.get('total_deleted', 0)
-            text = f"📊 **Bot Statistics**\n\n👥 Total Users: `{tu}`\n📧 Total Generated: `{tg}`\n🗑️ Total Deleted: `{td}`"
+            tg_td = stats.get('total_generated_mail_td', 0)
+            tg_gw = stats.get('total_generated_mail_gw', 0)
+            
+            text = f"📊 **Bot Statistics**\n\n👥 Total Users: `{tu}`\n📧 Total Generated: `{tg}`\n🗑️ Total Deleted: `{td}`\n\n🌐 **Server Stats:**\n🔹 Mail.td Generated: `{tg_td}`\n🔹 Mail.gw Generated: `{tg_gw}`"
             bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=admin_back_inline())
             
         elif action == "usertxt":
@@ -537,12 +552,12 @@ def admin_actions(call):
 
         elif action == "tdkeys":
             keys = db.reference('settings/mail_td_keys').get() or []
-            text = "🔑 **Mail.td Pro Keys Management:**\n_(Delete one by one)_"
+            text = "🔑 **Mail.td API Keys Management:**\n_(Delete one by one)_"
             markup = InlineKeyboardMarkup(row_width=1)
             for i, key in enumerate(keys):
                 short_key = key[:10] + "..." if len(key)>10 else key
                 markup.add(InlineKeyboardButton(f"🗑️ Delete: {short_key}", callback_data=f"delkey_{i}"))
-            markup.add(InlineKeyboardButton("➕ Add New Pro Key", callback_data="tdkey_add"))
+            markup.add(InlineKeyboardButton("➕ Add New API Key", callback_data="tdkey_add"))
             markup.add(InlineKeyboardButton("🔙 Back", callback_data="admin_home"))
             bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
 
@@ -577,25 +592,25 @@ def admin_sub_actions(call):
             if 0 <= idx < len(keys):
                 del keys[idx]
                 db.reference('settings/mail_td_keys').set(keys)
-                bot.answer_callback_query(call.id, "Pro Key Deleted!")
+                bot.answer_callback_query(call.id, "API Key Deleted!")
                 
-                text = "🔑 **Mail.td Pro Keys Management:**\n_(Delete one by one)_"
+                text = "🔑 **Mail.td API Keys Management:**\n_(Delete one by one)_"
                 markup = InlineKeyboardMarkup(row_width=1)
                 for i, key in enumerate(keys):
                     short_key = key[:10] + "..." if len(key)>10 else key
                     markup.add(InlineKeyboardButton(f"🗑️ Delete: {short_key}", callback_data=f"delkey_{i}"))
-                markup.add(InlineKeyboardButton("➕ Add New Pro Key", callback_data="tdkey_add"))
+                markup.add(InlineKeyboardButton("➕ Add New API Key", callback_data="tdkey_add"))
                 markup.add(InlineKeyboardButton("🔙 Back", callback_data="admin_home"))
                 bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
                 
         elif call.data == "tdkey_add":
-            msg = bot.send_message(call.message.chat.id, "নতুন Mail.td Pro API Key দিন (যেমন: td_102eb...):", reply_markup=back_markup())
+            msg = bot.send_message(call.message.chat.id, "নতুন Mail.td API Key দিন (যেমন: td_102eb...):", reply_markup=back_markup())
             def save_key(m):
                 if m.text in ["🔙 Back to Main Menu", "❌ Cancel"]: return back_to_main(m)
                 keys = db.reference('settings/mail_td_keys').get() or []
                 if m.text not in keys: keys.append(m.text)
                 db.reference('settings/mail_td_keys').set(keys)
-                bot.send_message(m.chat.id, "✅ Pro Key Added Successfully!", reply_markup=main_menu(m.chat.id))
+                bot.send_message(m.chat.id, "✅ API Key Added Successfully!", reply_markup=main_menu(m.chat.id))
             bot.register_next_step_handler(msg, save_key)
             
         elif call.data.startswith('ban_'):
@@ -684,12 +699,11 @@ def auto_check_inbox():
     while True:
         try:
             users = db.reference('users').get() or {}
-            # Multi-threading to handle 500+ users simultaneously without lag
             for chat_id, data in users.items():
                 if isinstance(data, dict) and data.get("active_mail"):
                     Thread(target=fetch_mail_for_user, args=(chat_id, data)).start()
         except: pass
-        time.sleep(10) # 10 seconds timeout is safe for 500+ users load
+        time.sleep(10)
 
 # --- Flask & Server Run ---
 app = Flask(__name__)
