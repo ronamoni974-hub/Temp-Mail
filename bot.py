@@ -112,7 +112,7 @@ def check_force_sub(user_id):
 # --- UI Menus ---
 def main_menu(user_id):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(KeyboardButton("✨ Generate Mail"), KeyboardButton("📥 Inbox"))
+    markup.add(KeyboardButton("✉️ Generate primium Mail"), KeyboardButton("📥 Inbox"))
     markup.add(KeyboardButton("🎛️ Dashboard"), KeyboardButton("👤 Profile"))
     markup.add(KeyboardButton("🌐 Server"), KeyboardButton("🔐 2FA Authenticator"))
     markup.add(KeyboardButton("🎧 Support"))
@@ -232,7 +232,7 @@ def support(message):
 @bot.message_handler(func=lambda m: m.text == "🔐 2FA Authenticator")
 def ask_2fa_secret(message):
     if not check_force_sub(message.chat.id): return start_message(message)
-    msg = bot.send_message(message.chat.id, "🛡️ **আপনার 2FA Setup/Secret Key দিন:**\n*( )*", parse_mode="Markdown", reply_markup=back_markup())
+    msg = bot.send_message(message.chat.id, "🛡️ **আপনার 2FA Setup/Secret Key দিন:**\n*(ক্যান্সেল করতে নিচে ❌ বাটনে ক্লিক করুন)🔐*", parse_mode="Markdown", reply_markup=back_markup())
     bot.register_next_step_handler(msg, generate_otp_code)
 
 def generate_otp_code(message):
@@ -286,7 +286,7 @@ def refresh_inbox_callback(call):
     check_inbox(call.message)
 
 # --- Mail Generation ---
-@bot.message_handler(func=lambda m: m.text == "✨ Generate Mail")
+@bot.message_handler(func=lambda m: m.text == "✉️ Generate primium Mail")
 def generate_mail(message):
     user_id = message.chat.id
     if not check_force_sub(user_id): return start_message(message)
@@ -303,7 +303,7 @@ def generate_mail(message):
     if server == "mail.td":
         keys = db.reference('settings/mail_td_keys').get() or []
         if not keys:
-            bot.edit_message_text("❌ **কোনো API Key পাওয়া যায়নি!**\nঅ্যাডমিনকে Pannel থেকে Mail.td Key অ্যাড করতে বলুন।", user_id, loading_msg.message_id, parse_mode="Markdown")
+            bot.edit_message_text("❌ **কোনো mail পাওয়া যায়নি!**\nঅ্যাডমিন এর সাথে যোগাযোগ করুন।", user_id, loading_msg.message_id, parse_mode="Markdown")
             return
             
         for key in keys:
@@ -383,7 +383,7 @@ def check_inbox(message):
     mails = user_data.get("mails", {})
     
     if not active or active.replace('.', ',') not in mails:
-        bot.send_message(user_id, "⚠️ **আপনার কোনো অ্যাক্টিভ ইমেইল নেই!**\nআগে '✨ Generate Mail' এ ক্লিক করুন।", parse_mode="Markdown")
+        bot.send_message(user_id, "⚠️ **আপনার কোনো অ্যাক্টিভ ইমেইল নেই!**\nআগে '✉️ Generate primium Mail' এ ক্লিক করুন।", parse_mode="Markdown")
         return
 
     loading_msg = bot.send_message(user_id, "🔄 **Scanning Live Inbox...**\n_Checking for latest OTPs..._", parse_mode="Markdown")
