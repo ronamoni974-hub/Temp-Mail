@@ -61,6 +61,8 @@ def extract_otp(text):
 def clean_mail_body(text):
     if not text: return "No content"
     text = str(text)
+    # Remove unwanted URLs (http/https links)
+    text = re.sub(r'\[?https?://\S+\]?', '', text)
     text = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', text, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r'<[^>]+>', ' ', text)
     text = html.unescape(text)
@@ -234,7 +236,7 @@ def generate_otp_code(message):
         otp_code = totp.now()
         
         # 2FA তে শুধুমাত্র OTP
-        otp_msg = f"✅ **2FA Authenticator Code:**\n\n\nYour Verification Code :\n`{otp_code}`\n\n\n*(কোডটি কপি করতে ক্লিক করুন)*"
+        otp_msg = f"✅ **2FA Authenticator Code:**\n\nYour Verification Code : `{otp_code}`\n\n*(কোডটি কপি করতে ক্লিক করুন)*"
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("❌ Close", callback_data="close_msg"))
         bot.reply_to(message, otp_msg, parse_mode="Markdown", reply_markup=markup)
@@ -254,8 +256,8 @@ def build_and_send_notification(chat_id, sender, subj, text, html_content=""):
         main_notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** `{subj}`\n"
         
         if otp:
-            # OTP ফরম্যাট: উপরে নিচে এক লাইন ফাঁকা
-            main_notification += f"\n\nYour Verification Code :\n`{otp}`\n\n\n"
+            # OTP ফরম্যাট: লেখার পাশেই কোড
+            main_notification += f"\nYour Verification Code : `{otp}`\n\n"
             
         main_notification += f"📄 **Message:**\n_{clean_txt}_"
         
@@ -263,7 +265,8 @@ def build_and_send_notification(chat_id, sender, subj, text, html_content=""):
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🔄 Refresh Inbox", callback_data="refresh_inbox"))
         
-        bot.send_message(chat_id, main_notification, parse_mode="Markdown", reply_markup=markup)
+        # disable_web_page_preview=True যুক্ত করা হয়েছে যাতে বড় ছবির প্রিভিউ না আসে
+        bot.send_message(chat_id, main_notification, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
     except Exception as e:
         print(f"Notification Error: {e}")
 
