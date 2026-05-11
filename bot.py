@@ -132,7 +132,12 @@ def start_message(message):
             bot.reply_to(message, "❌ **Account Banned!**\nআপনি এই বটটি আর ব্যবহার করতে পারবেন না।", parse_mode="Markdown")
             return
             
+        # Save User Info for TXT List
+        name = message.from_user.first_name or "Unknown"
+        username = message.from_user.username or "N/A"
         db.reference(f'users/{user_id}/id').set(user_id) 
+        db.reference(f'users/{user_id}/name').set(name) 
+        db.reference(f'users/{user_id}/username').set(username) 
         
         if not check_force_sub(user_id):
             channel = db.reference('settings/force_sub').get()
@@ -197,8 +202,10 @@ def profile(message):
     user_id = message.chat.id
     user_data = get_user_data(user_id)
     total_generated = len(user_data.get("mails", {})) if isinstance(user_data.get("mails"), dict) else 0
+    name = user_data.get("name", "User")
     
     text = f"👤 **User Profile**\n\n"
+    text += f"📛 **Name:** {name}\n"
     text += f"🆔 **Account ID:** `{user_id}`\n"
     text += f"🌐 **Default Server:** `{user_data.get('server', 'mail.td')}`\n"
     text += f"📧 **Total Generated:** `{total_generated}` Mails\n"
@@ -226,13 +233,12 @@ def generate_otp_code(message):
         totp = pyotp.TOTP(secret)
         otp_code = totp.now()
         
-        # 2FA তে শুধুমাত্র OTP বাটন ও Close বাটন
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton(f"📋 Copy", callback_data=f"copy_{otp_code}"),
-            InlineKeyboardButton("❌ Close", callback_data="close_msg")
-        )
-        bot.reply_to(message, f"`{otp_code}`", parse_mode="Markdown", reply_markup=markup)
+        # 2FA তে শুধুমাত্র OTP
+        otp_msg = f"✅ **2FA Authenticator Code:**\n\n\nYour Verification Code :\n`{otp_code}`\n\n\n*(কোডটি কপি করতে ক্লিক করুন)*"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("❌ Close", callback_data="close_msg"))
+        bot.reply_to(message, otp_msg, parse_mode="Markdown", reply_markup=markup)
+        
         bot.send_message(message.chat.id, "মেইন মেনু থেকে যেকোনো সার্ভিস সিলেক্ট করুন:", reply_markup=main_menu(message.chat.id))
     except Exception:
         bot.reply_to(message, "❌ **ভুল Secret Key!** আবার চেষ্টা করুন।", reply_markup=main_menu(message.chat.id))
@@ -245,26 +251,21 @@ def build_and_send_notification(chat_id, sender, subj, text, html_content=""):
         if not content_to_clean: content_to_clean = text
         clean_txt = clean_mail_body(content_to_clean)
         
-        main_notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** `{subj}`\n\n📄 **Message:**\n_{clean_txt}_"
-        bot.send_message(chat_id, main_notification, parse_mode="Markdown")
+        main_notification = f"🔔 **NEW MAIL RECEIVED!**\n\n👤 **From:** `{sender}`\n📌 **Subject:** `{subj}`\n"
         
-        # OTP এবং Refresh বাটন একই লাইনে
-        markup = InlineKeyboardMarkup(row_width=2)
         if otp:
-            markup.add(
-                InlineKeyboardButton(f"📋 {otp}", callback_data=f"copy_{otp}"),
-                InlineKeyboardButton("🔄 Refresh", callback_data="refresh_inbox")
-            )
-            bot.send_message(chat_id, f"`{otp}`", parse_mode="Markdown", reply_markup=markup)
-        else:
-            markup.add(InlineKeyboardButton("🔄 Refresh Inbox", callback_data="refresh_inbox"))
-            bot.send_message(chat_id, "অতিরিক্ত মেইল চেক করতে রিফ্রেশ করুন:", reply_markup=markup)
+            # OTP ফরম্যাট: উপরে নিচে এক লাইন ফাঁকা
+            main_notification += f"\n\nYour Verification Code :\n`{otp}`\n\n\n"
+            
+        main_notification += f"📄 **Message:**\n_{clean_txt}_"
+        
+        # শুধুমাত্র Refresh বাটন
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🔄 Refresh Inbox", callback_data="refresh_inbox"))
+        
+        bot.send_message(chat_id, main_notification, parse_mode="Markdown", reply_markup=markup)
     except Exception as e:
         print(f"Notification Error: {e}")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('copy_'))
-def copy_otp_callback(call):
-    bot.answer_callback_query(call.id, f"✅ কোডটি কপি করতে মেসেজের উপর টাচ করুন!", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'close_msg')
 def close_msg_callback(call):
@@ -496,7 +497,9 @@ def admin_actions(call):
 
         elif action == "stats":
             stats = get_stats()
-            tu = stats.get('total_users', 0)
+            # Fetch actual user count from db to ensure accurate stats
+            users = db.reference('users').get() or {}
+            tu = len(users)
             tg = stats.get('total_generated', 0)
             td = stats.get('total_deleted', 0)
             text = f"📊 **Bot Statistics**\n\n👥 Total Users: `{tu}`\n📧 Total Generated: `{tg}`\n🗑️ Total Deleted: `{td}`"
@@ -506,16 +509,21 @@ def admin_actions(call):
             bot.send_message(call.message.chat.id, "⏳ Generating User List...")
             users = db.reference('users').get() or {}
             txt_content = "=== BOT USER DATABASE ===\n\n"
+            count = 0
             for uid, data in users.items():
                 if not isinstance(data, dict): continue
                 m_count = len(data.get('mails', {})) if isinstance(data.get('mails'), dict) else 0
                 banned = "YES" if data.get('banned') else "NO"
-                txt_content += f"ID: {uid} | Banned: {banned} | Mails: {m_count} | Active: {data.get('active_mail', 'None')}\n"
-            
+                name = data.get('name', 'Unknown')
+                uname = data.get('username', 'N/A')
+                txt_content += f"ID: {uid} | Name: {name} | Username: @{uname} | Mails: {m_count} | Banned: {banned}\n"
+                count += 1
+                
+            txt_content = f"Total Users: {count}\n" + txt_content
             with open("user_details.txt", "w", encoding="utf-8") as f:
                 f.write(txt_content)
             with open("user_details.txt", "rb") as f:
-                bot.send_document(call.message.chat.id, f, caption="📝 **Full User Details List**", parse_mode="Markdown")
+                bot.send_document(call.message.chat.id, f, caption=f"📝 **Full User Details List ({count} Users)**", parse_mode="Markdown")
 
         elif action == "fsub":
             channel = db.reference('settings/force_sub').get() or "Not Set"
@@ -568,7 +576,6 @@ def admin_sub_actions(call):
                 db.reference('settings/mail_td_keys').set(keys)
                 bot.answer_callback_query(call.id, "Pro Key Deleted!")
                 
-                # Re-render keys panel
                 text = "🔑 **Mail.td Pro Keys Management:**\n_(Delete one by one)_"
                 markup = InlineKeyboardMarkup(row_width=1)
                 for i, key in enumerate(keys):
@@ -624,7 +631,7 @@ def send_broadcast(message):
         except: pass
     bot.send_message(message.chat.id, f"✅ Notice sent to {sent} users.", reply_markup=main_menu(message.chat.id))
 
-# --- Background Auto Checker ---
+# --- High Performance Multi-Threaded Auto Checker ---
 def fetch_mail_for_user(chat_id, user_data):
     try:
         active = user_data.get("active_mail")
@@ -654,7 +661,7 @@ def fetch_mail_for_user(chat_id, user_data):
                     build_and_send_notification(chat_id, sender, subj, text, html_body)
         else:
             headers = get_api_headers(mail_info.get("token"))
-            res = requests.get('https://api.mail.gw/messages', headers=headers).json()
+            res = requests.get('https://api.mail.gw/messages', headers=headers, timeout=10).json()
             messages = res if isinstance(res, list) else res.get('hydra:member', [])
             
             for msg in messages:
@@ -662,7 +669,7 @@ def fetch_mail_for_user(chat_id, user_data):
                 if msg_id not in seen_msgs:
                     seen_msgs.append(msg_id)
                     db.reference(seen_key).set(seen_msgs)
-                    full_msg = requests.get(f'https://api.mail.gw/messages/{msg_id}', headers=headers).json()
+                    full_msg = requests.get(f'https://api.mail.gw/messages/{msg_id}', headers=headers, timeout=10).json()
                     subj = msg.get('subject', 'No Subject')
                     sender = msg['from'].get('address', 'Unknown') if isinstance(msg.get('from'), dict) else msg.get('from', 'Unknown')
                     text = full_msg.get('text', '') or full_msg.get('intro', '')
@@ -674,10 +681,12 @@ def auto_check_inbox():
     while True:
         try:
             users = db.reference('users').get() or {}
+            # Multi-threading to handle 500+ users simultaneously without lag
             for chat_id, data in users.items():
-                fetch_mail_for_user(chat_id, data)
+                if isinstance(data, dict) and data.get("active_mail"):
+                    Thread(target=fetch_mail_for_user, args=(chat_id, data)).start()
         except: pass
-        time.sleep(5)
+        time.sleep(10) # 10 seconds timeout is safe for 500+ users load
 
 # --- Flask & Server Run ---
 app = Flask(__name__)
@@ -692,7 +701,7 @@ if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     Thread(target=auto_check_inbox, daemon=True).start()
     
-    # Auto Polling Recovery System (বট আর কখনোই ক্র্যাশ করবে না)
+    # Auto Polling Recovery System
     while True:
         try:
             print("Starting Bot Polling...")
