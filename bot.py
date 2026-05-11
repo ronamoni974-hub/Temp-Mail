@@ -152,7 +152,7 @@ def start_message(message):
         welcome_text = "🎉 **Welcome to Temp Mail Bot!** 🎉\n\n"
         welcome_text += "সোশ্যাল মিডিয়া বা যেকোনো অ্যাকাউন্ট খোলার জন্য হাই-কোয়ালিটি এবং সিকিউর মেইল জেনারেট করুন এক ক্লিকে।\n\n"
         welcome_text += "🔹 **Fast Live Inbox & OTP Scanner**\n"
-        welcome_text += "🔹 **Premium Mail.td Pro Integration**\n"
+        welcome_text += "🔹 **Mail.td Pro Integration**\n"
         welcome_text += "🔹 **Secure 2FA Authenticator**\n\n"
         welcome_text += "👇 *নিচের মেনু থেকে আপনার প্রয়োজনীয় সার্ভিসটি বেছে নিন:*"
         
@@ -278,7 +278,7 @@ def refresh_inbox_callback(call):
     check_inbox(call.message)
 
 # --- Mail Generation ---
-@bot.message_handler(func=lambda m: m.text == "✨ Generate Pro Mail")
+@bot.message_handler(func=lambda m: m.text == "✨ Generate Mail")
 def generate_mail(message):
     user_id = message.chat.id
     if not check_force_sub(user_id): return start_message(message)
@@ -300,7 +300,7 @@ def generate_mail(message):
             
         for key in keys:
             try:
-                bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nFetching Premium Domain (Mail.td)...", user_id, loading_msg.message_id, parse_mode="Markdown")
+                bot.edit_message_text("⏳ `[■■■■■■□□□□] 60%`\nFetching Domain (Mail.td)...", user_id, loading_msg.message_id, parse_mode="Markdown")
                 client = MailTD(key)
                 domains = client.accounts.list_domains()
                 domain = domains[0].domain if hasattr(domains[0], 'domain') else domains[0]
@@ -318,7 +318,7 @@ def generate_mail(message):
                 increment_stat("total_generated")
                 
                 bot.delete_message(user_id, loading_msg.message_id)
-                msg = f"🎉 **Premium Mail Generated!**\n\n📧 **Your Address:**\n👉 `{email}` 👈\n\n🛰️ **Server:** `{server}` API\n🟢 **Status:** Live Sync Active\n_• Listening for incoming mails..._"
+                msg = f"🎉 **Mail Generated!**\n\n📧 **Your Address:**\n👉 `{email}` 👈\n\n🛰️ **Server:** `{server}` API\n🟢 **Status:** Live Sync Active\n_• Listening for incoming mails..._"
                 bot.send_message(user_id, msg, parse_mode="Markdown")
                 success = True
                 break
@@ -348,7 +348,7 @@ def generate_mail(message):
             increment_stat("total_generated")
             
             bot.delete_message(user_id, loading_msg.message_id)
-            msg = f"🎉 **Premium Mail Generated!**\n\n📧 **Your Address:**\n👉 `{email}` 👈\n\n🛰️ **Server:** `{server}` API\n🟢 **Status:** Live Sync Active\n_• Listening for incoming mails..._"
+            msg = f"🎉 **Mail Generated!**\n\n📧 **Your Address:**\n👉 `{email}` 👈\n\n🛰️ **Server:** `{server}` API\n🟢 **Status:** Live Sync Active\n_• Listening for incoming mails..._"
             bot.send_message(user_id, msg, parse_mode="Markdown")
             success = True
         except Exception as e:
@@ -691,7 +691,7 @@ def auto_check_inbox():
 # --- Flask & Server Run ---
 app = Flask(__name__)
 @app.route('/')
-def index(): return "SaaS Premium Bot is Running & Stable!"
+def index(): return "SaaS Bot is Running & Stable!"
 
 def run_flask(): 
     try: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
