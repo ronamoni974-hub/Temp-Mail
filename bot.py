@@ -225,8 +225,8 @@ def profile(message):
 def support(message):
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(InlineKeyboardButton("👨‍💻 Developer Walid", url=SUPPORT_LINK))
-    markup.add(InlineKeyboardButton("💬 Contact Bot Admin", url=f"https://t.me/{ADMIN_USERNAME}"))
-    bot.send_message(message.chat.id, "🎧 **Support Center**\n\nবটের যেকোনো সমস্যার জন্য অ্যাডমিনের সাথে যোগাযোগ করুন। টেকনিক্যাল সাপোর্টের জন্য ডেভেলপারের সাথে যোগাযোগ করতে পারেন।", parse_mode="Markdown", reply_markup=markup)
+    markup.add(InlineKeyboardButton("💬 Contact Bot Admin Hridoy", url=f"https://t.me/{ADMIN_USERNAME}"))
+    bot.send_message(message.chat.id, "🎧 **Support Center**\n\nবটের যেকোনো সমস্যার জন্য অ্যাডমিন CEO-HRIDOY ভাইয়ের সাথে যোগাযোগ করুন। টেকনিক্যাল সাপোর্টের জন্য ডেভেলপারের সাথে যোগাযোগ করতে পারেন।", parse_mode="Markdown", reply_markup=markup)
 
 # --- 2FA Authenticator ---
 @bot.message_handler(func=lambda m: m.text == "🔐 2FA Authenticator")
