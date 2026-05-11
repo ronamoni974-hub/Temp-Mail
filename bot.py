@@ -103,7 +103,7 @@ def check_force_sub(user_id):
 # --- UI Menus ---
 def main_menu(user_id):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(KeyboardButton("✨ Generate Premium Mail"), KeyboardButton("📥 Inbox"))
+    markup.add(KeyboardButton("✨ Generate Mail"), KeyboardButton("📥 Inbox"))
     markup.add(KeyboardButton("🎛️ Dashboard"), KeyboardButton("👤 Profile"))
     markup.add(KeyboardButton("🌐 Server"), KeyboardButton("🔐 2FA Authenticator"))
     markup.add(KeyboardButton("🎧 Support"))
@@ -149,7 +149,7 @@ def start_message(message):
 
         increment_stat("total_users")
         
-        welcome_text = "🎉 **Welcome to Premium Temp Mail Bot!** 🎉\n\n"
+        welcome_text = "🎉 **Welcome to Temp Mail Bot!** 🎉\n\n"
         welcome_text += "সোশ্যাল মিডিয়া বা যেকোনো অ্যাকাউন্ট খোলার জন্য হাই-কোয়ালিটি এবং সিকিউর মেইল জেনারেট করুন এক ক্লিকে।\n\n"
         welcome_text += "🔹 **Fast Live Inbox & OTP Scanner**\n"
         welcome_text += "🔹 **Premium Mail.td Pro Integration**\n"
@@ -183,7 +183,7 @@ def server_menu(message):
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton(f"{'✅' if current=='mail.td' else '🌐'} Premium Mail.td", callback_data="srv_mail.td"),
+        InlineKeyboardButton(f"{'✅' if current=='mail.td' else '🌐'} Pro Mail.td", callback_data="srv_mail.td"),
         InlineKeyboardButton(f"{'✅' if current=='mail.gw' else '🌐'} Default Mail.gw", callback_data="srv_mail.gw")
     )
     bot.send_message(user_id, f"🌐 **Current Active Server:** `{current}`\n\nযেকোনো সোশ্যাল মিডিয়া অ্যাকাউন্ট খুলতে হাই-কোয়ালিটি সার্ভার বেছে নিন:", parse_mode="Markdown", reply_markup=markup)
@@ -223,7 +223,7 @@ def support(message):
 @bot.message_handler(func=lambda m: m.text == "🔐 2FA Authenticator")
 def ask_2fa_secret(message):
     if not check_force_sub(message.chat.id): return start_message(message)
-    msg = bot.send_message(message.chat.id, "🛡️ **আপনার 2FA Setup/Secret Key দিন:**\n*(ক্যান্সেল করতে নিচে বাটনে ক্লিক করুন)*", parse_mode="Markdown", reply_markup=back_markup())
+    msg = bot.send_message(message.chat.id, "🛡️ **আপনার 2FA Setup/Secret Key দিন:**\n*( )*", parse_mode="Markdown", reply_markup=back_markup())
     bot.register_next_step_handler(msg, generate_otp_code)
 
 def generate_otp_code(message):
@@ -278,7 +278,7 @@ def refresh_inbox_callback(call):
     check_inbox(call.message)
 
 # --- Mail Generation ---
-@bot.message_handler(func=lambda m: m.text == "✨ Generate Premium Mail")
+@bot.message_handler(func=lambda m: m.text == "✨ Generate Pro Mail")
 def generate_mail(message):
     user_id = message.chat.id
     if not check_force_sub(user_id): return start_message(message)
@@ -369,7 +369,7 @@ def check_inbox(message):
     mails = user_data.get("mails", {})
     
     if not active or active.replace('.', ',') not in mails:
-        bot.send_message(user_id, "⚠️ **আপনার কোনো অ্যাক্টিভ ইমেইল নেই!**\nআগে '✨ Generate Premium Mail' এ ক্লিক করুন।", parse_mode="Markdown")
+        bot.send_message(user_id, "⚠️ **আপনার কোনো অ্যাক্টিভ ইমেইল নেই!**\nআগে '✨ Generate Mail' এ ক্লিক করুন।", parse_mode="Markdown")
         return
 
     loading_msg = bot.send_message(user_id, "🔄 **Scanning Live Inbox...**\n_Checking for latest OTPs..._", parse_mode="Markdown")
